@@ -1,0 +1,23 @@
+# Vercel builds only the frontend, but keep secret and personal material out
+# of deployment uploads if the project root or packaging configuration changes.
+.env*
+**/.env*
+*.env
+**/*.env
+RESUMES/
+resumes/
+**/RESUMES/
+**/resumes/
+models/
+**/models/
+backup/
+**/backup/
+**/backups/
+*.sql
+*.dump
+*.bson
+*.archive
+node_modules/
+test-results/
+playwright-report/
+coverage/

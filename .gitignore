@@ -1,0 +1,113 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+.env.*.production
+frontend/.env*
+!frontend/.env.example
+/RESUMES/
+/resumes/
+/data/
+/backup/
+/models/
+*.sql
+*.dump
+*.bson
+*.archive
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# Data files
+data/raw/creditcard.csv
+data/processed/*.csv
+
+# ML Models
+models/trained_model_*.pkl
+models/preprocessor_*.pkl
+
+# Reports
+reports/*.html
+reports/*.pdf
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Streamlit
+.streamlit/
+
+# Environment
+.env.development
+.env.test
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test results
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+node_modules/
+frontend/test-results/
+frontend/playwright-report/
+models/*_v*.joblib
+models/*_v*.scaler
+models/*_v*.json
+models/*.tmp
+models/.training.lock
+frontend/*.tsbuildinfo
+dist/
+build/
+*.egg-info/

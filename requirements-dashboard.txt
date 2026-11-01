@@ -1,0 +1,42 @@
+# Streamlit Dashboard Requirements
+# Core Streamlit Framework
+streamlit>=1.36.0
+streamlit-option-menu>=0.3.6
+
+# API & HTTP Clients
+requests>=2.31.0
+httpx>=0.25.1
+
+# Data Processing & Analytics
+pandas>=2.0.3
+numpy>=1.24.3
+
+# Visualization
+plotly>=5.17.0
+matplotlib>=3.7.2
+seaborn>=0.12.2
+
+# JWT & Security
+PyJWT>=2.8.1
+cryptography>=41.0.5
+
+# Utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+Pillow>=10.0.1
+
+# Environment & Configuration
+python-dotenv>=1.0.0
+
+# Optional: Caching
+redis>=5.0.0
+
+# Development & Testing
+pytest>=7.4.2
+pytest-asyncio>=0.21.1
+black>=23.10.0
+flake8>=6.1.0
+mypy>=1.5.1
+
+# Logging & Monitoring
+python-json-logger>=2.0.7

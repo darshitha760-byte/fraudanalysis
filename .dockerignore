@@ -1,0 +1,116 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+# Never include dotenv files in an image, including tracked production files
+# and safe-looking templates. Configure runtime settings in the host instead.
+.env*
+**/.env*
+*.env
+**/*.env
+
+# Personal assets and local data must never enter a deployment image.
+RESUMES/
+resumes/
+**/RESUMES/
+**/resumes/
+/data/
+/models/
+backup/
+**/backup/
+**/backups/
+*.sql
+*.dump
+*.bson
+*.archive
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.parquet
+*.jsonl
+*.pdf
+*.docx
+*.xlsx
+reports/
+**/reports/
+logs/
+**/logs/
+htmlcov/
+.coverage
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+htmlcov/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backup/
+
+# Logs
+*.log
+
+# Migrations
+migrations/versions/__pycache__/
+
+# Documentation
+docs/_build/
+site/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Other
+.DS_Store
+*.bak
+*.tmp
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+.tmp/

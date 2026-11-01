@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Login session storage</title></head>
+<body>
+<script>
+    const storageKey = "fraud_detection_auth_token";
+    let previousRequestId;
+
+    function send(type, data = {}) {
+        window.parent.postMessage(
+            {isStreamlitMessage: true, type: type, ...data},
+            "*"
+        );
+    }
+
+    window.addEventListener("message", (event) => {
+        if (event.source !== window.parent || event.data.type !== "streamlit:render") {
+            return;
+        }
+        const request = event.data.args.request;
+        if (!request || request.id === previousRequestId) {
+            return;
+        }
+        previousRequestId = request.id;
+        try {
+            if (request.action === "write") {
+                localStorage.setItem(storageKey, request.token);
+            } else if (request.action === "clear") {
+                localStorage.removeItem(storageKey);
+            } else if (request.action !== "read") {
+                throw new Error("Unsupported session operation");
+            }
+            send("streamlit:setComponentValue", {
+                value: {
+                    id: request.id,
+                    token: localStorage.getItem(storageKey),
+                },
+            });
+        } catch (error) {
+            send("streamlit:setComponentValue", {
+                value: {id: request.id, error: "Browser storage unavailable"},
+            });
+        }
+        send("streamlit:setFrameHeight", {height: 0});
+    });
+
+    send("streamlit:componentReady", {apiVersion: 1});
+    send("streamlit:setFrameHeight", {height: 0});
+</script>
+</body>
+</html>

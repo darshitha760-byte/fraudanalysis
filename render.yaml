@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: fraud-detection-api
+    runtime: docker
+    region: ohio
+    # Free-only per user approval. Render Free has ephemeral storage; do not
+    # treat locally trained model files as durable across restarts/redeploys.
+    plan: free
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: ./
+    healthCheckPath: /health/ready
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: fraud_detection_db
+      # Configure this to the exact Vercel production origin before launch.
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: MODEL_STORAGE_BACKEND
+        value: atlas
+      - key: MODEL_ARTIFACT_SIGNING_KEY
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+    autoDeployTrigger: commit
