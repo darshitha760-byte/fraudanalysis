@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P.V. Sushanth - Portfolio</title>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Playfair+Display:wght@400;700&display=swap');
+
+:root {
+    --primary-color: #004d99; /* A professional deep blue */
+    --secondary-color: #007bff; /* A lighter, classic blue */
+    --background-color: #ffffff; /* Clean white */
+    --card-background: #f8f9fa; /* Light grey for cards */
+    --text-color: #495057; /* Dark gray for prose */
+    --heading-color: #212529; /* Almost black for headings */
+    --border-color: #e9ecef;
+    --hover-color: #0056b3; /* A slightly darker blue for hover */
+    --link-color: var(--primary-color);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+    overflow-x: hidden;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+/* ==========================
+Global Styles
+==========================
+*/
+
+.section-title {
+    text-align: center;
+    font-family: 'Playfair Display', serif;
+    font-size: 2.8rem;
+    font-weight: 700;
+    color: var(--heading-color);
+    margin-bottom: 3rem;
+    position: relative;
+    padding-bottom: 0.5rem;
+}
+
+.section-title::after {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 3px;
+    background: var(--primary-color);
+    margin: 0.5rem auto 0;
+    border-radius: 1.5px;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.8rem 2.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    border: 2px solid transparent;
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    color: #fff;
+    border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+    background-color: var(--hover-color);
+    border-color: var(--hover-color);
+    transform: translateY(-3px);
+    box-shadow: 0 5px 15px rgba(0, 77, 153, 0.2);
+}
+
+.btn-secondary {
+    background: none;
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-secondary:hover {
+    background-color: var(--primary-color);
+    color: #fff;
+    transform: translateY(-3px);
+    box-shadow: 0 5px 15px rgba(0, 77, 153, 0.2);
+}
+
+/* ==========================
+Navigation Bar
+==========================
+*/
+.navbar {
+    background-color: rgba(255, 255, 255, 0.95);
+    position: fixed;
+    width: 100%;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background-color 0.3s ease;
+    border-bottom: 1px solid var(--border-color);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.nav-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+}
+
+.nav-logo h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.8rem;
+    color: var(--heading-color);
+    font-weight: 700;
+}
+
+.nav-menu {
+    display: flex;
+    list-style: none;
+    gap: 2rem;
+}
+
+.nav-link {
+    color: var(--text-color);
+    text-decoration: none;
+    font-weight: 400;
+    position: relative;
+    transition: color 0.3s ease;
+}
+
+.nav-link::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: -5px;
+    left: 0;
+    background-color: var(--primary-color);
+    transition: width 0.3s ease;
+}
+
+.nav-link:hover {
+    color: var(--hover-color);
+}
+
+.nav-link:hover::after {
+    width: 100%;
+}
+
+.hamburger {
+    display: none;
+    flex-direction: column;
+    cursor: pointer;
+    gap: 5px;
+}
+
+.hamburger .bar {
+    width: 25px;
+    height: 3px;
+    background-color: var(--text-color);
+    border-radius: 5px;
+    transition: all 0.3s ease;
+}
+
+/* ==========================
+Hero Section
+==========================
+*/
+.hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(248, 249, 250, 0.9)),
+                url('https://source.unsplash.com/random/1920x1080/?professional,coding,tech-office') no-repeat center center/cover;
+    position: relative;
+}
+
+.hero::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 100px;
+    background: linear-gradient(to top, var(--background-color), transparent);
+}
+
+.hero-container {
+    padding-top: 5rem;
+    z-index: 1;
+}
+
+.hero-content h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 4rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    color: var(--heading-color);
+}
+
+.hero-content h2 {
+    font-family: 'Roboto', sans-serif;
+    font-size: 2rem;
+    font-weight: 400;
+    margin-bottom: 1rem;
+    color: var(--primary-color);
+}
+
+.hero-content p {
+    max-width: 700px;
+    margin: 0 auto 2.5rem;
+    font-size: 1.1rem;
+    color: var(--text-color);
+}
+
+.highlight {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+.hero-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 2.5rem;
+}
+
+.social-links {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+}
+
+.social-link {
+    color: var(--text-color);
+    font-size: 1.8rem;
+    transition: color 0.3s ease, transform 0.3s ease;
+}
+
+.social-link:hover {
+    color: var(--hover-color);
+    transform: scale(1.1);
+}
+
+/* ==========================
+About Section
+==========================
+*/
+.about {
+    padding: 6rem 0;
+    background-color: var(--card-background);
+}
+
+.about-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4rem;
+    align-items: center;
+}
+
+.about-text {
+    max-width: 900px;
+    text-align: center;
+}
+
+.about-text p {
+    margin-bottom: 1.5rem;
+    font-size: 1.1rem;
+    color: var(--text-color);
+}
+
+.about-stats {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 3rem;
+    text-align: center;
+}
+
+.stat {
+    background: var(--background-color);
+    padding: 2.5rem;
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+    width: 280px;
+    transition: transform 0.3s ease;
+    border: 1px solid var(--border-color);
+}
+
+.stat:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 25px rgba(0, 0, 0, 0.1);
+}
+
+.stat h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 3rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+}
+
+.stat p {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-color);
+}
+
+/* ==========================
+Education Section
+==========================
+*/
+.education {
+    padding: 6rem 0;
+    background-color: #f0f3f6;
+}
+
+.education-timeline {
+    position: relative;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.education-timeline::after {
+    content: '';
+    position: absolute;
+    width: 3px;
+    background-color: var(--primary-color);
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    margin-left: -1.5px;
+}
+
+.education-item {
+    padding: 1.5rem 3rem;
+    position: relative;
+    background-color: inherit;
+    width: 50%;
+    margin-bottom: 2.5rem;
+}
+
+.education-item::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    right: -9px;
+    background-color: var(--primary-color);
+    border: 3px solid var(--background-color);
+    top: 20px;
+    border-radius: 50%;
+    z-index: 1;
+}
+
+.education-item:nth-child(even) {
+    left: 50%;
+    padding-left: 4rem;
+}
+
+.education-item:nth-child(odd)::after {
+    left: unset;
+    right: -9px;
+}
+
+.education-item:nth-child(even)::after {
+    left: -9px;
+}
+
+.education-content {
+    background-color: var(--card-background);
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+    position: relative;
+    border: 1px solid var(--border-color);
+}
+
+.education-content h3 {
+    font-family: 'Playfair Display', serif;
+    color: var(--primary-color);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.education-content h4 {
+    color: var(--text-color);
+    font-size: 1.1rem;
+    font-weight: 400;
+    margin-bottom: 0.5rem;
+}
+
+.education-content .grade {
+    font-weight: 500;
+    color: var(--secondary-color);
+}
+
+.education-date {
+    position: absolute;
+    top: 25px;
+    color: #999;
+    font-size: 0.9rem;
+    font-weight: 400;
+    width: 120px;
+    text-align: center;
+    transform: translateX(-50%);
+    left: 50%;
+}
+
+/* ==========================
+Skills Section
+==========================
+*/
+.skills {
+    padding: 6rem 0;
+    background-color: var(--card-background);
+}
+
+.skills-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3.5rem;
+    justify-content: center;
+}
+
+.skills-category {
+    background-color: #f0f3f6;
+    padding: 3rem;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    text-align: center;
+    width: 100%;
+    max-width: 550px;
+    border: 1px solid var(--border-color);
+}
+
+.skills-category h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 2rem;
+    color: var(--primary-color);
+    margin-bottom: 2rem;
+    font-weight: 600;
+}
+
+.skills-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 2rem;
+    justify-content: center;
+}
+
+.skill-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 1.2rem;
+    background-color: var(--card-background);
+    border-radius: 10px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border: 1px solid var(--border-color);
+}
+
+.skill-item:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(0, 77, 153, 0.15);
+}
+
+.skill-item i {
+    font-size: 2.8rem;
+    color: var(--primary-color);
+}
+
+.skill-item span {
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+/* ==========================
+Projects Section
+==========================
+*/
+.projects {
+    padding: 6rem 0;
+    background-color: #f0f3f6;
+}
+
+.projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 3rem;
+}
+
+.project-card {
+    background-color: var(--card-background);
+    border-radius: 15px;
+    padding: 3rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    border: 1px solid var(--border-color);
+}
+
+.project-card:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+}
+
+.project-header {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    margin-bottom: 2rem;
+    color: var(--primary-color);
+}
+
+.project-header i {
+    font-size: 2.2rem;
+}
+
+.project-header h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+
+.project-content p {
+    margin-bottom: 1rem;
+    color: var(--text-color);
+    font-size: 1rem;
+}
+
+.project-features h4 {
+    color: var(--secondary-color);
+    margin-top: 2rem;
+    margin-bottom: 0.8rem;
+    font-weight: 500;
+}
+
+.project-features ul {
+    list-style: none;
+    margin-left: 1rem;
+}
+
+.project-features ul li {
+    position: relative;
+    padding-left: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-color);
+}
+
+.project-features ul li::before {
+    content: '\f058'; /* Font Awesome check-circle icon */
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    color: var(--primary-color);
+    position: absolute;
+    left: 0;
+}
+
+.project-tech {
+    margin-top: 2rem;
+}
+
+.tech-tag {
+    display: inline-block;
+    background-color: var(--primary-color);
+    color: #fff;
+    padding: 0.5rem 1.2rem;
+    border-radius: 25px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-right: 0.6rem;
+    margin-bottom: 0.6rem;
+    letter-spacing: 0.5px;
+}
+
+/* ==========================
+Certifications Section
+==========================
+*/
+.certifications {
+    padding: 6rem 0;
+    background-color: var(--card-background);
+}
+
+.certifications-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 2.5rem;
+    justify-content: center;
+}
+
+.certification-card {
+    background-color: #f0f3f6;
+    border-radius: 15px;
+    padding: 2.5rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--border-color);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.certification-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+}
+
+.cert-icon {
+    font-size: 3.5rem;
+    color: var(--primary-color);
+    min-width: 50px;
+    text-align: center;
+}
+
+.cert-content h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.5rem;
+    color: var(--primary-color);
+    margin-bottom: 0.3rem;
+}
+
+.cert-issuer {
+    font-style: italic;
+    color: var(--secondary-color);
+    margin-bottom: 0.8rem;
+    font-size: 0.95rem;
+}
+
+.cert-content p {
+    color: var(--text-color);
+}
+
+/* ==========================
+Contact Section
+==========================
+*/
+.contact {
+    padding: 6rem 0;
+    background-color: #f0f3f6;
+}
+
+.contact-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 4rem;
+    align-items: flex-start;
+}
+
+.contact-info h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 2rem;
+    color: var(--primary-color);
+    margin-bottom: 1.5rem;
+}
+
+.contact-info p {
+    color: var(--text-color);
+    margin-bottom: 2.5rem;
+    font-size: 1.1rem;
+}
+
+.contact-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.contact-item {
+    display: flex;
+    align-items: center;
+    gap: 1.8rem;
+}
+
+.contact-item i {
+    font-size: 1.8rem;
+    color: var(--primary-color);
+    min-width: 30px;
+}
+
+.contact-item h4 {
+    font-size: 1.2rem;
+    font-weight: 500;
+    margin-bottom: 0.3rem;
+}
+
+.contact-item a {
+    color: var(--text-color);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.contact-item a:hover {
+    color: var(--hover-color);
+    text-decoration: underline;
+}
+
+.contact-form .form-group {
+    margin-bottom: 1.5rem;
+}
+
+.contact-form input,
+.contact-form textarea {
+    width: 100%;
+    padding: 1rem;
+    background-color: var(--card-background);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-color);
+    font-family: 'Roboto', sans-serif;
+    font-size: 1rem;
+    transition: border-color 0.3s ease;
+}
+
+.contact-form input:focus,
+.contact-form textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(0, 77, 153, 0.15);
+}
+
+.contact-form textarea {
+    resize: vertical;
+}
+
+/* ==========================
+Footer
+==========================
+*/
+.footer {
+    background-color: var(--card-background);
+    text-align: center;
+    padding: 2.5rem 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.footer-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.footer-links {
+    display: flex;
+    gap: 2rem;
+}
+
+.footer-links a {
+    color: var(--text-color);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer-links a:hover {
+    color: var(--primary-color);
+}
+
+/* ==========================
+Responsive Design
+==========================
+*/
+@media (max-width: 768px) {
+    .nav-menu {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        text-align: center;
+        position: absolute;
+        top: 60px;
+        left: 0;
+        background-color: rgba(255, 255, 255, 0.95);
+        border-top: 1px solid var(--border-color);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+
+    .nav-menu.active {
+        display: flex;
+    }
+
+    .nav-item {
+        margin: 1rem 0;
+    }
+
+    .hamburger {
+        display: flex;
+    }
+    
+    .hero-content h1 {
+        font-size: 2.8rem;
+    }
+    
+    .hero-content h2 {
+        font-size: 1.6rem;
+    }
+    
+    .about-content, .contact-content {
+        flex-direction: column;
+    }
+
+    .stat {
+        width: 100%;
+        max-width: 300px;
+    }
+    
+    .education-timeline::after {
+        left: 31px;
+    }
+    
+    .education-item {
+        width: 100%;
+        padding-left: 4rem;
+        padding-right: 1rem;
+    }
+    
+    .education-item::after {
+        left: 20px;
+    }
+    
+    .education-item:nth-child(even) {
+        left: 0;
+        padding-left: 4rem;
+    }
+
+    .education-item:nth-child(odd)::after {
+        left: 20px;
+        right: unset;
+    }
+
+    .education-item:nth-child(even)::after {
+        left: 20px;
+    }
+    
+    .skills-category {
+        padding: 1.5rem;
+    }
+
+    .projects-grid, .certifications-grid {
+        grid-template-columns: 1fr;
+    }
+}
+.hero {
+  text-align: center;
+  padding-top: 120px;   /* distance from navbar to photo */
+  padding-bottom: 10px; /* reduced big empty gap */
+  margin-bottom: 0;     /* remove extra margin */
+}
+
+.profile-photo {
+  width: 450px;
+  height: 450px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  margin: 0 auto;
+  border: 4px solid #004d99;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+
+
+
+
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <h2>P.V. Sushanth</h2>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item"><a href="#home" class="nav-link">Home</a></li>
+                <li class="nav-item"><a href="#about" class="nav-link">About</a></li>
+                <li class="nav-item"><a href="#education" class="nav-link">Education</a></li>
+                <li class="nav-item"><a href="#skills" class="nav-link">Skills</a></li>
+                <li class="nav-item"><a href="#projects" class="nav-link">Projects</a></li>
+                <li class="nav-item"><a href="#certifications" class="nav-link">Certifications</a></li>
+                <li class="nav-item"><a href="#contact" class="nav-link">Contact</a></li>
+            </ul>
+            <div class="hamburger">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </div>
+        </div>
+    </nav>
+    
+
+
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="hero-container">
+            <div class="hero-content">
+                <h1>Hi, I'm <span class="highlight">P.V. Sushanth</span></h1>
+                <h2>Computer Science Engineering Student</h2>
+                <p>Passionate about coding, technology, and maintaining a balanced lifestyle. I enjoy building applications, solving problems, and constantly learning new tools to improve my development skills.</p>
+                <div class="hero-buttons">
+                    <a href="#about" class="btn btn-primary">About Me</a>
+                    <a href="#contact" class="btn btn-secondary">Get In Touch</a>
+                </div>
+                <div class="social-links">
+                    <a href="https://github.com/SUSHANTHPVS" class="social-link" title="GitHub" target="_blank">
+                        <i class="fab fa-github"></i>
+                    </a>
+                    <a href="https://www.linkedin.com/in/sushanth-p-v-67290a31b/" class="social-link" title="LinkedIn" target="_blank">
+                        <i class="fab fa-linkedin"></i>
+                    </a>
+                    <a href="mailto:pvsushanthpv@gmail.com" class="social-link" title="Email">
+                        <i class="fas fa-envelope"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" class="about">
+        <div class="container">
+            <h2 class="section-title">About Me</h2>
+            <div class="about-content">
+                <div class="about-text">
+                    <p>I am a Computer Science Engineering student with a passion for coding and building impactful projects. Along with academics, I actively engage in fitness and creative activities that help me maintain balance and productivity.</p>
+                    
+                    <p>Currently pursuing my B.Tech in Computer Science Engineering at Mohan Babu University, I have maintained a CGPA of 8.8. My strong academic foundation continues from intermediate education at Sri Chaitanya with a CGPA of 9.4.</p>
+                    
+                    <p>I am particularly interested in full-stack web development, databases, and problem-solving through programming. My projects range from web applications to fitness companion apps and smart systems.</p>
+                    
+                    <p>Beyond technical expertise, I value teamwork, adaptability, and leadership. I believe in learning continuously and contributing to meaningful solutions that combine both technical depth and real-world application.</p>
+                </div>
+                <div class="about-stats">
+                    <div class="stat">
+                        <h3>8.8</h3>
+                        <p>CGPA in B.Tech</p>
+                    </div>
+                    <div class="stat">
+                        <h3>9.4</h3>
+                        <p>Intermediate GPA</p>
+                    </div>
+                    <div class="stat">
+                        <h3>3+</h3>
+                        <p>Projects Completed</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Education Section -->
+    <section id="education" class="education">
+        <div class="container">
+            <h2 class="section-title">Education</h2>
+            <div class="education-timeline">
+                <div class="education-item">
+                    <div class="education-date">2021 - 2025</div>
+                    <div class="education-content">
+                        <h3>B.Tech in Computer Science Engineering</h3>
+                        <h4>Mohan Babu University</h4>
+                        <p class="grade">CGPA: 8.8/10</p>
+                        <p>Focused on programming, web development, databases, and emerging technologies like AI and data science.</p>
+                    </div>
+                </div>
+                <div class="education-item">
+                    <div class="education-date">2019 - 2021</div>
+                    <div class="education-content">
+                        <h3>Intermediate (MPC)</h3>
+                        <h4>Sri Chaitanya</h4>
+                        <p class="grade">CGPA: 9.4/10</p>
+                        <p>Studied Mathematics, Physics, and Chemistry with excellent academic performance.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Skills Section -->
+    <section id="skills" class="skills">
+        <div class="container">
+            <h2 class="section-title">Skills</h2>
+            <div class="skills-container">
+                <div class="skills-category">
+                    <h3>Technical Skills</h3>
+                    <div class="skills-grid">
+                        <div class="skill-item"><i class="fab fa-html5"></i><span>HTML</span></div>
+                        <div class="skill-item"><i class="fab fa-css3-alt"></i><span>CSS</span></div>
+                        <div class="skill-item"><i class="fab fa-js-square"></i><span>JavaScript</span></div>
+                        <div class="skill-item"><i class="fab fa-react"></i><span>React.js</span></div>
+                        <div class="skill-item"><i class="fab fa-node"></i><span>Node.js</span></div>
+                        <div class="skill-item"><i class="fab fa-java"></i><span>Java</span></div>
+                        <div class="skill-item"><i class="fab fa-python"></i><span>Python</span></div>
+                        <div class="skill-item"><i class="fas fa-database"></i><span>MySQL</span></div>
+                    </div>
+                </div>
+                <div class="skills-category">
+                    <h3>Soft Skills</h3>
+                    <div class="skills-grid">
+                        <div class="skill-item"><i class="fas fa-brain"></i><span>Problem Solving</span></div>
+                        <div class="skill-item"><i class="fas fa-clock"></i><span>Time Management</span></div>
+                        <div class="skill-item"><i class="fas fa-users"></i><span>Team Collaboration</span></div>
+                        <div class="skill-item"><i class="fas fa-microphone"></i><span>Communication</span></div>
+                        <div class="skill-item"><i class="fas fa-user-tie"></i><span>Leadership</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Projects Section -->
+    <section id="projects" class="projects">
+        <div class="container">
+            <h2 class="section-title">Projects</h2>
+            <div class="projects-grid">
+                <div class="project-card">
+                    <div class="project-header">
+                        <i class="fas fa-dumbbell"></i>
+                        <h3>FitLife – Your Personal Fitness Companion</h3>
+                    </div>
+                    <div class="project-content">
+                        <p><strong>Technology:</strong> React.js, Node.js, MySQL</p>
+                        <p>A fitness tracking web app that helps users plan workouts, track progress, and maintain a healthy lifestyle.</p>
+                        <div class="project-features">
+                            <h4>Key Features:</h4>
+                            <ul>
+                                <li>Workout and diet tracking</li>
+                                <li>Progress monitoring dashboard</li>
+                                <li>User-friendly interface</li>
+                            </ul>
+                        </div>
+                        <div class="project-tech">
+                            <span class="tech-tag">React.js</span>
+                            <span class="tech-tag">Node.js</span>
+                            <span class="tech-tag">MySQL</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="project-card">
+                    <div class="project-header">
+                        <i class="fas fa-music"></i>
+                        <h3>Virtual Piano</h3>
+                    </div>
+                    <div class="project-content">
+                        <p><strong>Technology:</strong> Java</p>
+                        <p>An interactive online piano app that allows users to play and learn music in a fun way.</p>
+                        <div class="project-features">
+                            <h4>Key Features:</h4>
+                            <ul>
+                                <li>Interactive piano keys</li>
+                                <li>Play with keyboard support</li>
+                                <li>Responsive design</li>
+                            </ul>
+                        </div>
+                        <div class="project-tech">
+                            <span class="tech-tag">Java</span>
+                            
+                        </div>
+                    </div>
+                </div>
+                <div class="project-card">
+                    <div class="project-header">
+                        <i class="fas fa-traffic-light"></i>
+                        <h3>Traffic Management System</h3>
+                    </div>
+                    <div class="project-content">
+                        <p><strong>Technology:</strong> Java, Database</p>
+                        <p>A smart city traffic optimization project to manage traffic flow using efficient algorithms and databases.</p>
+                        <div class="project-features">
+                            <h4>Key Features:</h4>
+                            <ul>
+                                <li>Smart traffic signal optimization</li>
+                                <li>Vehicle flow monitoring</li>
+                                <li>Scalable system design</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="project-tech">
+                            <span class="tech-tag">Java</span>
+                            <span class="tech-tag">DBMS</span>
+                            <span class="tech-tag">Algorithms</span>
+                        </div>
+                    </div>
+                    
+                </div>
+                <div class="project-card">
+                    <div class="project-header">
+                        <i class="fas fa-music"></i>
+                        <h3>Yaar Yatra-Ultimate Travel Partner</h3>
+                    </div>
+                    <div class="project-content">
+                        <p><strong>Technology:</strong> Html,Css,Javascript</p>
+                        <p>Your interactive online itinerary builder. Play around with destinations, mix-and-match excursions, and hit the perfect notes for your next adventure in a fun, intuitive way.</p>
+                        <div class="project-features">
+                            <h4>Key Features:</h4>
+                            <ul>
+                                <li>High Interactive Website</li>
+                                <li>Easy Booking </li>
+                                <li>Responsive design</li>
+                            </ul>
+                        </div>
+                        <div class="project-tech">
+                            
+                            <span class="tech-tag">Html</span>
+                            <span class="tech-tag">Css</span>
+                            <span class="tech-tag">Javascript</span>
+                            <span class="tech-tag">React.js</span>
+                        </div>
+                    </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Certifications Section -->
+    <section id="certifications" class="certifications">
+        <div class="container">
+            <h2 class="section-title">Certifications</h2>
+            <div class="certifications-grid">
+                <div class="certification-card">
+                    <div class="cert-icon"><i class="fab fa-google"></i></div>
+                    <div class="cert-content">
+                        <h3>Google Project Management</h3>
+                        <p class="cert-issuer"></p>
+                        <p>Google Project Management refers to how Google plans, executes, and delivers its projects efficiently at scale. It combines structured methodologies with flexibility, enabling teams to innovate while staying aligned with business goals.
+
+</p>
+                    </div>
+                </div>
+                <div class="certification-card">
+                    <div class="cert-icon"><i class="fab fa-java"></i></div>
+                    <div class="cert-content">
+                        <h3>Java Spring Boot Essentials</h3>
+                        <p class="cert-issuer"></p>
+                        <p>A Java Spring Boot Essentials Certificate validates your ability to build modern backend applications using Spring Boot and Java. It shows employers that you understand core backend development concepts like REST APIs, database integration, and application architecture.
+
+</p>
+                    </div>
+                </div>
+                <div class="certification-card">
+                    <div class="cert-icon"><i class="fab fa-docker"></i></div>
+                    <div class="cert-content">
+                        <h3>Docker & Kubernetes</h3>
+                        <p class="cert-issuer"></p>
+                        <p>A Docker and Kubernetes certificate proves your ability to build, package, deploy, and manage applications using containers and orchestration tools. It’s highly valued for DevOps, cloud, and backend roles.
+
+</p>
+            
+                    </div>
+                    
+                </div>
+                <div class="certification-card">
+                    <div class="cert-icon"><i class="fas fa-sync"></i></div>
+                    <div class="cert-content">
+                        <h3>Agile Approaches and Change Strategies Certification</h3>
+                        <p class="cert-issuer"></p>
+                        <p>An Agile Approaches and Change Strategies certification validates your ability to manage projects using agile methods and handle organizational change effectively. It’s especially useful for roles in project management, product development, and team leadership.
+</p>
+            </div>
+            </div>
+                <div class="certification-card">
+                    <div class="cert-icon"><i class="fas fa-clipboard-list"></i></div>
+                    <div class="cert-content">
+                        <h3>Software Development Life Cycle Fundamentals</h3>
+                        <p class="cert-issuer"></p>
+                        <p>An Agile Approaches and Change Strategies certification validates your ability to manage projects using agile methods and handle organizational change effectively. It’s especially useful for roles in project management, product development, and team leadership.
+</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section id="contact" class="contact">
+        <div class="container">
+            <h2 class="section-title">Get In Touch</h2>
+            <div class="contact-content">
+                <div class="contact-info">
+                    <h3>Let's Connect</h3>
+                    <p>I'm always open to collaborating on exciting projects, internships, and opportunities where I can apply my skills and learn new things. Feel free to reach out!</p>
+                    
+                    <div class="contact-details">
+                        <div class="contact-item">
+                            <i class="fas fa-envelope"></i>
+                            <div>
+                                <h4>Email</h4>
+                                <a href="mailto:pvsushanthpv@gmail.com">pvsushanthpv@gmail.com</a>
+                            </div>
+                        </div>
+                        <div class="contact-item">
+                            <i class="fab fa-github"></i>
+                            <div>
+                                <h4>GitHub</h4>
+                                <a href="https://github.com/SUSHANTHPVS" target="_blank">github.com/SUSHANTHPVS</a>
+                            </div>
+                        </div>
+                        <div class="contact-item">
+                            <i class="fab fa-linkedin"></i>
+                            <div>
+                                <h4>LinkedIn</h4>
+                                <a href="https://www.linkedin.com/in/sushanth-p-v-67290a31b" target="_blank">linkedin.com/in/sushanth-p-v-67290a31b</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="contact-form">
+                    <h3>Send a Message</h3>
+                    <form id="contactForm">
+                        <div class="form-group">
+                            <input type="text" id="name" name="name" placeholder="Your Name" required>
+                        </div>
+                        <div class="form-group">
+                            <input type="email" id="email" name="email" placeholder="Your Email" required>
+                        </div>
+                        <div class="form-group">
+                            <input type="text" id="subject" name="subject" placeholder="Subject" required>
+                        </div>
+                        <div class="form-group">
+                            <textarea id="message" name="message" placeholder="Your Message" rows="5" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Send Message</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <p>&copy; 2024 P.V. Sushanth. All rights reserved.</p>
+                <div class="footer-links">
+                    <a href="#home">Home</a>
+                    <a href="#about">About</a>
+                    <a href="#projects">Projects</a>
+                    <a href="#contact">Contact</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

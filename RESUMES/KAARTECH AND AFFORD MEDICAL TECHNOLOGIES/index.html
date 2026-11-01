@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P.V. Sushanth | Full Stack Engineer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Use vanilla Lucide library for HTML/JS projects -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Outfit:wght@100;300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #030712;
+            --accent: #22d3ee;
+            --accent-soft: rgba(34, 211, 238, 0.1);
+        }
+        
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: #f3f4f6;
+            scroll-behavior: smooth;
+        }
+
+        h1, h2, h3, .font-heading {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .noise {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            opacity: 0.03;
+            z-index: 9999;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+
+        .mesh-bg {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: 
+                radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.08) 0%, transparent 40%);
+            z-index: -1;
+        }
+
+        .card-blur {
+            background: rgba(17, 24, 39, 0.4);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .card-blur:hover {
+            border-color: var(--accent);
+            background: rgba(17, 24, 39, 0.6);
+            transform: scale(1.02);
+            box-shadow: 0 20px 40px -20px rgba(34, 211, 238, 0.2);
+        }
+
+        .nav-pill {
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .text-glow {
+            text-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+        }
+
+        .skill-circle {
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .skill-circle:hover {
+            color: var(--accent);
+            transform: translateX(5px);
+        }
+
+        @keyframes blob {
+            0% { transform: translate(0px, 0px) scale(1); }
+            33% { transform: translate(30px, -50px) scale(1.1); }
+            66% { transform: translate(-20px, 20px) scale(0.9); }
+            100% { transform: translate(0px, 0px) scale(1); }
+        }
+
+        .animate-blob {
+            animation: blob 7s infinite alternate;
+        }
+
+        .delay-2000 { animation-delay: 2s; }
+        .delay-4000 { animation-delay: 4s; }
+    </style>
+</head>
+<body class="antialiased">
+    <div class="noise"></div>
+    <div class="mesh-bg"></div>
+
+    <!-- Background Blobs -->
+    <div class="fixed top-0 -left-4 w-72 h-72 bg-cyan-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob"></div>
+    <div class="fixed top-0 -right-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob delay-2000"></div>
+    <div class="fixed -bottom-8 left-20 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-10 animate-blob delay-4000"></div>
+
+    <!-- Navigation -->
+    <header class="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-fit">
+        <nav class="nav-pill flex items-center px-6 py-3 rounded-full gap-8">
+            <a href="#home" class="text-sm font-medium text-gray-400 hover:text-cyan-400 transition-colors">Home</a>
+            <a href="#about" class="text-sm font-medium text-gray-400 hover:text-cyan-400 transition-colors">About</a>
+            <a href="#projects" class="text-sm font-medium text-gray-400 hover:text-cyan-400 transition-colors">Works</a>
+            <a href="#contact" class="px-4 py-1.5 bg-cyan-500 text-gray-900 text-xs font-bold rounded-full hover:bg-cyan-400 transition-all">CONNECT</a>
+        </nav>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section id="home" class="min-h-screen flex items-center justify-center pt-20 px-6">
+            <div class="max-w-6xl w-full">
+                <div class="flex flex-col items-center text-center">
+                    <span class="inline-block px-4 py-1 mb-6 text-[10px] font-bold tracking-[0.3em] uppercase text-cyan-400 border border-cyan-400/30 rounded-full">
+                        Data Science
+                    </span>
+                    <h1 class="text-6xl md:text-9xl font-bold tracking-tighter leading-tight mb-8">
+                        P.V. <span class="text-cyan-400 text-glow">SUSHANTH</span>
+                    </h1>
+                    <p class="text-lg md:text-2xl text-gray-400 max-w-3xl font-light leading-relaxed mb-12">
+                        I engineer digital solutions that harmonize <span class="text-white font-medium">complex backend systems</span> with 
+                        <span class="text-white font-medium">intuitive frontend design</span>.
+                    </p>
+                    <div class="flex gap-4">
+                        <a href="https://github.com/SUSHANTHPVS" target="_blank" class="p-4 card-blur rounded-2xl">
+                            <i data-lucide="github" class="w-6 h-6 text-gray-300"></i>
+                        </a>
+                        <a href="https://www.linkedin.com/in/sushanth-p-v-67290a31b/" target="_blank" class="p-4 card-blur rounded-2xl">
+                            <i data-lucide="linkedin" class="w-6 h-6 text-gray-300"></i>
+                        </a>
+                        <a href="mailto:pvsushanthpv@gmail.com" class="p-4 card-blur rounded-2xl">
+                            <i data-lucide="mail" class="w-6 h-6 text-gray-300"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- About & Stats Section -->
+        <section id="about" class="py-32 px-6">
+            <div class="max-w-6xl mx-auto">
+                <div class="grid lg:grid-cols-2 gap-24 items-center">
+                    <div class="reveal">
+                        <h2 class="text-4xl font-bold mb-8">The Architect <span class="text-cyan-400">Behind the Code</span></h2>
+                        <p class="text-gray-400 text-lg leading-relaxed mb-8">
+                            Currently pursuing B.Tech in CSE at <span class="text-white">Mohan Babu University</span>, my approach combines technical rigor with creative problem-solving. I don't just write code; I design experiences that are scalable and resilient.
+                        </p>
+                        
+                        <div class="grid grid-cols-2 gap-8">
+                            <div class="border-l-2 border-cyan-500/30 pl-6">
+                                <p class="text-3xl font-bold text-white mb-1">8.8</p>
+                                <p class="text-xs font-bold text-gray-500 uppercase tracking-widest">B.Tech CGPA</p>
+                            </div>
+                            <div class="border-l-2 border-cyan-500/30 pl-6">
+                                <p class="text-3xl font-bold text-white mb-1">9.4</p>
+                                <p class="text-xs font-bold text-gray-500 uppercase tracking-widest">Intermediate CGPA</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 reveal">
+                        <div class="p-8 card-blur rounded-[2rem]">
+                            <i data-lucide="brain-circuit" class="w-8 h-8 text-cyan-400 mb-6"></i>
+                            <h4 class="font-bold mb-2">Problem Solving</h4>
+                            <p class="text-xs text-gray-500">Optimizing algorithms and enhancing performance across systems.</p>
+                        </div>
+                        <div class="p-8 card-blur rounded-[2rem] md:translate-y-12">
+                            <i data-lucide="users" class="w-8 h-8 text-purple-400 mb-6"></i>
+                            <h4 class="font-bold mb-2">Leadership</h4>
+                            <p class="text-xs text-gray-500">Fostering collaborative growth and steering team-centric technical projects.</p>
+                        </div>
+                        <div class="p-8 card-blur rounded-[2rem]">
+                            <i data-lucide="cloud" class="text-blue-400 w-8 h-8 mb-6"></i>
+                            <h4 class="font-bold mb-2">Cloud First</h4>
+                            <p class="text-xs text-gray-500">Leveraging AWS, Docker, and Kubernetes for modern deployments.</p>
+                        </div>
+                        <div class="p-8 card-blur rounded-[2rem] md:translate-y-12">
+                            <i data-lucide="database" class="w-8 h-8 text-emerald-400 mb-6"></i>
+                            <h4 class="font-bold mb-2">Data Driven</h4>
+                            <p class="text-xs text-gray-500">Expertise in MySQL and DBMS to handle massive data volumes.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Projects Grid -->
+        <section id="projects" class="py-32 px-6 bg-white/[0.01]">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex flex-col md:flex-row md:items-end justify-between mb-20">
+                    <div>
+                        <span class="text-xs font-bold text-cyan-500 uppercase tracking-[0.2em] mb-4 block">Portfolio</span>
+                        <h2 class="text-5xl font-bold">Selected Works</h2>
+                    </div>
+                    <p class="text-gray-500 mt-6 md:mt-0 max-w-xs text-sm">A collection of systems engineered to solve real-world complexities.</p>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-8">
+                    <!-- Project 1 -->
+                    <div class="group relative reveal">
+                        <div class="aspect-[16/10] bg-[#111827] rounded-[2.5rem] p-12 overflow-hidden border border-white/5 group-hover:border-cyan-500/50 transition-colors">
+                            <div class="flex justify-between items-start mb-12">
+                                <div class="p-4 bg-cyan-500/10 rounded-2xl text-cyan-400">
+                                    <i data-lucide="navigation-2" class="w-8 h-8"></i>
+                                </div>
+                                <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Java • DBMS</span>
+                            </div>
+                            <h3 class="text-3xl font-bold mb-4">Traffic Management</h3>
+                            <p class="text-gray-400 leading-relaxed mb-8">
+                                Engineered a smart city traffic optimization project using high-performance algorithms to reduce congestion.
+                            </p>
+                            <div class="flex gap-3">
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">Algorithms</span>
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">Optimization</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Project 2 -->
+                    <div class="group relative reveal md:mt-16">
+                        <div class="aspect-[16/10] bg-[#111827] rounded-[2.5rem] p-12 overflow-hidden border border-white/5 group-hover:border-purple-500/50 transition-colors">
+                            <div class="flex justify-between items-start mb-12">
+                                <div class="p-4 bg-purple-500/10 rounded-2xl text-purple-400">
+                                    <i data-lucide="map" class="w-8 h-8"></i>
+                                </div>
+                                <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Full Stack JS</span>
+                            </div>
+                            <h3 class="text-3xl font-bold mb-4">Yaaryaatra</h3>
+                            <p class="text-gray-400 leading-relaxed mb-8">
+                                Built an interactive itinerary platform with a seamless booking interface and mobile-first design.
+                            </p>
+                            <div class="flex gap-3">
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">Node.JS</span>
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">UI/UX</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Project 3 -->
+                    <div class="group relative reveal">
+                        <div class="aspect-[16/10] bg-[#111827] rounded-[2.5rem] p-12 overflow-hidden border border-white/5 group-hover:border-emerald-500/50 transition-colors">
+                            <div class="flex justify-between items-start mb-12">
+                                <div class="p-4 bg-emerald-500/10 rounded-2xl text-emerald-400">
+                                    <i data-lucide="music-4" class="w-8 h-8"></i>
+                                </div>
+                                <span class="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Java Audio</span>
+                            </div>
+                            <h3 class="text-3xl font-bold mb-4">Virtual Piano</h3>
+                            <p class="text-gray-400 leading-relaxed mb-8">
+                                A highly responsive desktop musical application with low-latency audio feedback loops.
+                            </p>
+                            <div class="flex gap-3">
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">Desktop</span>
+                                <span class="px-3 py-1 bg-white/5 rounded-full text-[10px] border border-white/10">Signals</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col justify-center p-12 reveal">
+                        <h4 class="text-2xl font-bold mb-4 italic text-gray-500">"Code is poetry written for machines to dance."</h4>
+                        <p class="text-gray-500 text-sm">Constantly refining the intersection of logic and creativity.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Toolbox & Certs -->
+        <section class="py-32 px-6">
+            <div class="max-w-6xl mx-auto">
+                <div class="grid lg:grid-cols-3 gap-16">
+                    <div class="lg:col-span-2 reveal">
+                        <h2 class="text-4xl font-bold mb-12">The <span class="text-cyan-400">Toolbox</span></h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
+                            <div>
+                                <h5 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-white/5 pb-2">Core Tech</h5>
+                                <ul class="space-y-4">
+                                    <li class="skill-circle flex items-center gap-3">Java <span class="w-2 h-2 rounded-full bg-cyan-500/40"></span></li>
+                                    <li class="skill-circle flex items-center gap-3">JavaScript <span class="w-2 h-2 rounded-full bg-cyan-500/40"></span></li>
+                                    <li class="skill-circle flex items-center gap-3">SQL <span class="w-2 h-2 rounded-full bg-cyan-500/40"></span></li>
+                                    <li class="skill-circle flex items-center gap-3">HTML & CSS <span class="w-2 h-2 rounded-full bg-cyan-500/40"></span></li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h5 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-white/5 pb-2">Architecture</h5>
+                                <ul class="space-y-4">
+                                    <li class="skill-circle flex items-center gap-3 text-white/90">React.JS</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/90">Node.JS</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/90">Spring Boot</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/90">Tailwind CSS</li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h5 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-white/5 pb-2">Operations</h5>
+                                <ul class="space-y-4">
+                                    <li class="skill-circle flex items-center gap-3 text-white/70 italic">AWS</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/70 italic">Docker</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/70 italic">Kubernetes</li>
+                                    <li class="skill-circle flex items-center gap-3 text-white/70 italic">MySQL</li>
+                                </ul>
+                            </div>
+                            <!-- Soft Skills Inclusion -->
+                            <div>
+                                <h5 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-white/5 pb-2">Soft Skills</h5>
+                                <ul class="space-y-4">
+                                    <li class="skill-circle flex items-center gap-3 text-cyan-400/90 font-medium italic">Problem Solving</li>
+                                    <li class="skill-circle flex items-center gap-3 text-cyan-400/90 font-medium italic">Team Collaboration</li>
+                                    <li class="skill-circle flex items-center gap-3 text-cyan-400/90 font-medium italic">Leadership</li>
+                                    <li class="skill-circle flex items-center gap-3 text-cyan-400/90 font-medium italic">Communication</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="reveal">
+                        <h2 class="text-4xl font-bold mb-12">Certs</h2>
+                        <div class="space-y-4">
+                            <div class="p-6 card-blur rounded-2xl flex items-center gap-4">
+                                <div class="w-10 h-10 bg-cyan-500/10 rounded-full flex items-center justify-center text-cyan-400">
+                                    <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <h6 class="text-sm font-bold">Google Project Management</h6>
+                                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">2025</p>
+                                </div>
+                            </div>
+                            <div class="p-6 card-blur rounded-2xl flex items-center gap-4">
+                                <div class="w-10 h-10 bg-purple-500/10 rounded-full flex items-center justify-center text-purple-400">
+                                    <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <h6 class="text-sm font-bold">Java Spring Boot</h6>
+                                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">2025</p>
+                                </div>
+                            </div>
+                            <div class="p-6 card-blur rounded-2xl flex items-center gap-4">
+                                <div class="w-10 h-10 bg-blue-500/10 rounded-full flex items-center justify-center text-blue-400">
+                                    <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <h6 class="text-sm font-bold">Docker & Kubernetes</h6>
+                                    <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest">2025</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        
+
+    <footer class="py-12 px-6 border-t border-white/5">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+            <p class="text-[10px] font-bold text-gray-500 uppercase tracking-[0.3em]">&copy; 2025 P.V. SUSHANTH </p>
+            <div class="flex gap-8">
+                <a href="https://github.com/SUSHANTHPVS" target="_blank" class="text-gray-500 hover:text-white transition-colors"><i data-lucide="github" class="w-4 h-4"></i></a>
+                <a href="https://linkedin.com/sushanth-p-v-67290a31b" target="_blank" class="text-gray-500 hover:text-white transition-colors"><i data-lucide="linkedin" class="w-4 h-4"></i></a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Init Lucide with the correct library reference
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
+
+        // Reveal animations
+        const revealElements = document.querySelectorAll('.reveal');
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        revealElements.forEach(el => observer.observe(el));
+
+        // Smooth Scroll for header links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
