@@ -1,32 +1,4 @@
 services:
-  # MySQL Database Service
-  mysql:
-    image: mysql:8.0-debian
-    container_name: fraud_detection_mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-fraud_detection}
-      MYSQL_USER: ${MYSQL_USER:-fraud_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-fraud_password}
-      MYSQL_INITDB_SKIP_TZINFO: "yes"
-    ports:
-      - "3307:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - fraud_detection_network
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   # Redis Cache Service (Optional)
   redis:
     image: redis:7-alpine
@@ -56,23 +28,17 @@ services:
       dockerfile: Dockerfile.api
     container_name: fraud_detection_api
     environment:
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      DB_HOST: mysql
-      DB_PORT: "3306"
-      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI must be configured}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-fraud_detection_db}
       REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be configured}
+      FASTAPI_HOST: 0.0.0.0
+      FASTAPI_PORT: 8000
       DEBUG: ${DEBUG:-false}
       ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "${API_HOST_PORT:-8001}:8000"
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -144,8 +110,6 @@ services:
         max-file: "3"
 
 volumes:
-  mysql_data:
-    driver: local
   redis_data:
     driver: local
 

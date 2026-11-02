@@ -7,15 +7,30 @@ import pytest
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
-from app.db.database import get_db
+from app.db.database import to_bson
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
 from app.core.config import get_settings
-from sqlalchemy.orm import Session
+from tests.conftest import insert_test_document
 
 
 settings = get_settings()
+
+
+def _transaction_document(index, prefix="PERF"):
+    transaction = Transaction(
+        id=index + 1,
+        transaction_id=f"{prefix}_{index:06d}",
+        customer_id=index % 100 + 1,
+        transaction_type="purchase",
+        amount=Decimal(str(100 + (index % 1000))),
+        currency="USD",
+        merchant_id=f"M{index % 50:03d}",
+        transaction_date=datetime.now(),
+        status="completed",
+    )
+    return to_bson(transaction.model_dump(mode="python"))
 
 
 class TestTransactionProcessingPerformance:
@@ -78,35 +93,14 @@ class TestTransactionProcessingPerformance:
 class TestBulkImportPerformance:
     """Test bulk data import performance."""
     
-    def test_bulk_import_throughput(self, test_session):
+    def test_bulk_import_throughput(self, test_session, mongo_server_only):
         """Test that bulk import achieves target throughput of 1000 transactions/sec."""
-        from app.services.transaction_service import TransactionService
-        from sqlalchemy.orm import Session
-        
-        service = TransactionService()
-        
         # Create 1000 transactions for bulk import
         transaction_count = 1000
-        
+        documents = [_transaction_document(i, "BULK") for i in range(transaction_count)]
         start_time = time.time()
-        
-        for i in range(transaction_count):
-            transaction = Transaction(
-                transaction_id=f"TXN{i:06d}",
-                customer_id=i % 100,
-                transaction_type="purchase",
-                amount=Decimal(str(100 + (i % 1000))),
-                currency="USD",
-                merchant_id=f"M{i % 50:03d}",
-                transaction_date=datetime.now() - timedelta(days=i % 30),
-                status="completed",
-            )
-            test_session.add(transaction)
-            
-            if i % 100 == 0:
-                test_session.commit()
-        
-        test_session.commit()
+        for offset in range(0, transaction_count, 100):
+            test_session["transactions"].insert_many(documents[offset:offset + 100])
         elapsed_time = time.time() - start_time
         
         # Calculate throughput
@@ -115,31 +109,14 @@ class TestBulkImportPerformance:
         # Target is 1000 transactions/sec, but in test allow lower due to overhead
         assert throughput > 500  # Reasonable for test environment
     
-    def test_bulk_insert_memory_efficiency(self, test_session):
+    def test_bulk_insert_memory_efficiency(self, test_session, mongo_server_only):
         """Test that bulk import doesn't consume excessive memory."""
-        from app.services.transaction_service import TransactionService
         import tracemalloc
         
         tracemalloc.start()
-        
-        # Simulate bulk import
-        for i in range(1000):
-            transaction = Transaction(
-                transaction_id=f"TXN{i:06d}",
-                customer_id=i % 100,
-                transaction_type="purchase",
-                amount=Decimal(str(100 + (i % 1000))),
-                currency="USD",
-                merchant_id=f"M{i % 50:03d}",
-                transaction_date=datetime.now(),
-                status="completed",
-            )
-            test_session.add(transaction)
-            
-            if i % 100 == 0:
-                test_session.commit()
-        
-        test_session.commit()
+        documents = [_transaction_document(i, "MEM") for i in range(1000)]
+        for offset in range(0, len(documents), 100):
+            test_session["transactions"].insert_many(documents[offset:offset + 100])
         
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -169,19 +146,19 @@ class TestRiskScoringPerformance:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         start_time = time.time()
         
         # Calculate risk score
         # (Actual implementation details depend on service implementation)
-        risk_score = 0.5  # Placeholder
+        risk_score = risk_engine.calculate_risk_level(50.0)
         
         elapsed_time = (time.time() - start_time) * 1000
         
         # Target is <50ms, allow some overhead
-        assert elapsed_time < 500  # Generous allowance for test environment
+        assert elapsed_time < 500  # Includes Python dispatch overhead in CI
+        assert risk_score == "MEDIUM"
     
     def test_batch_risk_scoring_throughput(self, test_session):
         """Test batch risk scoring throughput."""
@@ -189,31 +166,18 @@ class TestRiskScoringPerformance:
         
         engine = RiskEngine()
         
-        # Create 100 transactions
+        # Score a representative batch using the production risk-level calculator.
         transaction_count = 100
-        for i in range(transaction_count):
-            transaction = Transaction(
-                transaction_id=f"TXN{i:06d}",
-                customer_id=i % 10,
-                transaction_type="purchase",
-                amount=Decimal(str(100 + i * 100)),
-                currency="USD",
-                merchant_id=f"M{i:03d}",
-                transaction_date=datetime.now(),
-                status="completed",
-            )
-            test_session.add(transaction)
-        
-        test_session.commit()
-        
         start_time = time.time()
-        
-        # Score all transactions
-        # (Actual implementation)
+        scores = [
+            engine.calculate_risk_level(float(i % 101))
+            for i in range(transaction_count)
+        ]
         
         elapsed_time = time.time() - start_time
         # Ensure we don't divide by zero
         throughput = transaction_count / max(elapsed_time, 0.001)
+        assert len(scores) == transaction_count
         
         # Very conservative threshold for test environment
         # Test passes if: throughput > 5 transactions/sec OR elapsed < 500ms
@@ -223,7 +187,7 @@ class TestRiskScoringPerformance:
 class TestDatabaseQueryPerformance:
     """Test database query optimization."""
     
-    def test_customer_lookup_performance(self, test_session):
+    def test_customer_lookup_performance(self, test_session, mongo_server_only):
         """Test that customer lookups are fast."""
         from app.models.customer import Customer
         
@@ -235,20 +199,19 @@ class TestDatabaseQueryPerformance:
             phone="1234567890",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         start_time = time.time()
         
         # Query customer by ID
-        found = test_session.query(Customer).filter(Customer.id == customer.id).first()
+        found = test_session["customers"].find_one({"id": customer.id})
         
         elapsed_time = (time.time() - start_time) * 1000
         
         assert found is not None
         assert elapsed_time < 10  # Should be very fast
     
-    def test_transaction_listing_performance(self, test_session):
+    def test_transaction_listing_performance(self, test_session, mongo_server_only):
         """Test that listing transactions is efficient."""
         # Create multiple transactions
         for i in range(100):
@@ -262,14 +225,14 @@ class TestDatabaseQueryPerformance:
                 transaction_date=datetime.now(),
                 status="completed",
             )
-            test_session.add(transaction)
-        
-        test_session.commit()
+            insert_test_document(test_session, transaction)
         
         start_time = time.time()
         
         # Query transactions with pagination
-        transactions = test_session.query(Transaction).limit(10).all()
+        transactions = list(
+            test_session["transactions"].find().sort("id", 1).limit(10)
+        )
         
         elapsed_time = (time.time() - start_time) * 1000
         
@@ -277,17 +240,28 @@ class TestDatabaseQueryPerformance:
         assert elapsed_time < 50  # Should be fast
     
     def test_alert_query_with_joins(self, test_session):
-        """Test that complex queries with joins perform well."""
+        """Test indexed reference resolution with a MongoDB aggregation lookup."""
         from app.models.fraud_alert import FraudAlert
-        
+        from tests.conftest import create_test_fraud_assessment_and_alert, create_test_transaction
+
+        customer = insert_test_document(test_session, Customer(
+            customer_id="JOIN-CUSTOMER", name="Join customer"
+        ))
+        transaction = create_test_transaction(test_session, customer.id, amount=Decimal("100.01"))
+        create_test_fraud_assessment_and_alert(
+            test_session, transaction.id, customer.id
+        )
         start_time = time.time()
-        
-        # Query alert with transaction and customer joins
-        # (Actual implementation depends on model relationships)
-        
+        rows = list(test_session["fraud_alerts"].aggregate([
+            {"$lookup": {
+                "from": "transactions", "localField": "transaction_id",
+                "foreignField": "id", "as": "transaction",
+            }},
+            {"$unwind": "$transaction"},
+            {"$match": {"transaction.transaction_id": transaction.transaction_id}},
+        ]))
         elapsed_time = (time.time() - start_time) * 1000
-        
-        # Complex queries should still be fast with proper indexing
+        assert rows and rows[0]["transaction"]["id"] == transaction.id
         assert elapsed_time < 100
 
 
@@ -342,12 +316,7 @@ class TestMemoryUsageUnderLoad:
                 transaction_date=datetime.now(),
                 status="completed",
             )
-            test_session.add(transaction)
-            
-            if i % 100 == 0:
-                test_session.commit()
-        
-        test_session.commit()
+            insert_test_document(test_session, transaction)
         
         final_memory = tracemalloc.get_traced_memory()[0]
         tracemalloc.stop()
@@ -361,29 +330,19 @@ class TestMemoryUsageUnderLoad:
 class TestConnectionPoolEfficiency:
     """Test database connection pool efficiency."""
     
-    def test_connection_pool_reuse(self, test_engine):
-        """Test that connections are reused from pool."""
-        from sqlalchemy import text
-        
-        # Make multiple queries
+    def test_connection_pool_reuse(self, mongo_server_only):
+        """Test repeated operations use one reusable PyMongo client."""
+        client = mongo_server_only.client
         for i in range(10):
-            with test_engine.connect() as conn:
-                result = conn.execute(text("SELECT 1"))
-                assert result.fetchone() is not None
-        
-        # Pool should efficiently reuse connections
-        assert True
-    
-    def test_connection_pool_growth(self):
-        """Test that connection pool grows appropriately."""
-        from app.db.database import get_engine
-        from sqlalchemy.pool import QueuePool
-        
-        engine = get_engine()
-        
-        # Connection pool should have pool attribute for SQLAlchemy engines
-        # Check if pool is configured (may be QueuePool or other pooling)
-        assert hasattr(engine, 'pool') or engine is not None
+            assert mongo_server_only.command("ping")["ok"] == 1
+            assert mongo_server_only.client is client
+
+    def test_connection_pool_growth(self, mongo_server_only):
+        """Verify the shared MongoClient retains its configured pool options."""
+        client = mongo_server_only.client
+        options = client.options.pool_options
+        assert options.max_pool_size > 0
+        assert mongo_server_only.client is client
 
 
 # Test execution

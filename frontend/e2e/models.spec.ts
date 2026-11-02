@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { login, logout } from "./helpers";
 
 test("train real demo models, read saved metrics, compare and retain them after reload", async ({ page }) => {
   await login(page);
@@ -26,7 +26,7 @@ test("train real demo models, read saved metrics, compare and retain them after 
   await expect(page.getByLabel("Saved model").locator("option")).toHaveCount(3);
   await page.getByRole("tab", { name: "Training history" }).click();
   await expect(page.locator("tbody tr")).toHaveCount(3);
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });
 
 test("analyst trains on labeled database data and configuration prevents empty algorithm selection", async ({ page }) => {
@@ -41,5 +41,5 @@ test("analyst trains on labeled database data and configuration prevents empty a
   await expect(page.getByText("Labeled database data", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Saved model").locator("option")).toHaveCount(4);
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });

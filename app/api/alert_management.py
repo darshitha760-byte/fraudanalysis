@@ -4,14 +4,12 @@ Alert Management API - Handles analyst workflow for fraud alert review and decis
 
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Query, status, status as http_status
 from pydantic import BaseModel, Field
 
-from app.db.database import get_db
-from app.models.fraud_alert import FraudAlert
+from app.db.database import from_bson, get_db
 from app.models.user import User
 from app.services.alert_service import AlertService
 from app.services.case_service import CaseService
@@ -120,7 +118,7 @@ async def get_pending_alerts(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get alerts awaiting review.
@@ -159,7 +157,7 @@ async def get_my_alerts(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get current analyst's assigned alerts.
@@ -198,7 +196,7 @@ async def get_my_alerts(
 async def get_alert_detail(
     alert_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get detailed alert information.
@@ -212,9 +210,7 @@ async def get_alert_detail(
         )
     
     try:
-        alert = db.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
+        alert = db["fraud_alerts"].find_one({"id": alert_id})
         
         if not alert:
             raise HTTPException(
@@ -223,7 +219,7 @@ async def get_alert_detail(
             )
         
         # Format alert response with all required fields
-        alert_data = AlertService._format_alert_response(alert)
+        alert_data = AlertService._format_alert_response(from_bson(alert))
         
         # Parse triggered_rules from summary string
         triggered_rules = []
@@ -262,7 +258,7 @@ async def mark_alert_for_review(
     alert_id: int,
     request: ReviewStatusRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Mark alert as UNDER_REVIEW by analyst.
@@ -276,9 +272,7 @@ async def mark_alert_for_review(
         )
     
     try:
-        alert = db.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
+        alert = db["fraud_alerts"].find_one({"id": alert_id})
         
         if not alert:
             raise HTTPException(
@@ -287,15 +281,14 @@ async def mark_alert_for_review(
             )
         
         # Update alert status
-        old_status = alert.alert_status
-        alert.alert_status = "UNDER_REVIEW"
-        alert.reviewed_by = current_user.id
-        alert.review_timestamp = datetime.utcnow()
-        
-        if request.analyst_notes:
-            alert.review_notes = request.analyst_notes
-        
-        db.commit()
+        old_status = alert.get("alert_status")
+        AlertService.update_alert_status(
+            db,
+            alert_id,
+            "under_review",
+            reviewed_by_user_id=current_user.id,
+            review_notes=request.analyst_notes,
+        )
         
         # Log the action
         AuditService.log_alert_status_change(
@@ -318,7 +311,6 @@ async def mark_alert_for_review(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Error marking alert {alert_id} for review: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -331,7 +323,7 @@ async def record_analyst_decision(
     alert_id: int,
     request: AlertDecisionRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Record analyst's decision on an alert.
@@ -356,9 +348,7 @@ async def record_analyst_decision(
         )
     
     try:
-        alert = db.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
+        alert = db["fraud_alerts"].find_one({"id": alert_id})
         
         if not alert:
             raise HTTPException(
@@ -367,24 +357,26 @@ async def record_analyst_decision(
             )
         
         # Record decision
-        old_status = alert.alert_status
-        alert.review_decision = request.decision
-        alert.review_notes = request.justification
-        alert.reviewed_by = current_user.id
-        alert.review_timestamp = datetime.utcnow()
+        old_status = alert.get("alert_status")
         
         # Update status based on decision
         if request.decision == "APPROVED":
-            alert.alert_status = "RESOLVED"
+            new_status = "resolved"
             case_type = "FRAUD_CONFIRMED"
         elif request.decision == "REJECTED":
-            alert.alert_status = "RESOLVED"
+            new_status = "resolved"
             case_type = "FALSE_POSITIVE"
         else:  # NEEDS_REVIEW
-            alert.alert_status = "PENDING"
+            new_status = "pending"
             case_type = "UNDER_INVESTIGATION"
-        
-        db.commit()
+        AlertService.update_alert_status(
+            db,
+            alert_id,
+            new_status,
+            reviewed_by_user_id=current_user.id,
+            review_decision=request.decision,
+            review_notes=request.justification,
+        )
         
         # Create investigation case if fraud confirmed or needs review
         if request.decision in ["APPROVED", "NEEDS_REVIEW"]:
@@ -416,14 +408,13 @@ async def record_analyst_decision(
             "status": "success",
             "alert_id": alert_id,
             "decision": request.decision,
-            "alert_status": alert.alert_status,
+            "alert_status": new_status.upper(),
             "message": f"Decision recorded: {request.decision}"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Error recording decision on alert {alert_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -437,7 +428,7 @@ async def get_alerts_by_status(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Filter alerts by status.
@@ -448,14 +439,14 @@ async def get_alerts_by_status(
     """
     if current_user.role not in ["admin", "analyst"]:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Only admins and analysts can view alerts"
         )
     
     valid_statuses = ["PENDING", "UNDER_REVIEW", "RESOLVED", "DISMISSED"]
     if status.upper() not in valid_statuses:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
         )
     
@@ -477,7 +468,7 @@ async def get_alerts_by_status(
     except Exception as e:
         logger.error(f"Error fetching alerts by status: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error fetching alerts"
         )
 
@@ -488,7 +479,7 @@ async def get_alerts_by_priority(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Filter alerts by priority/severity.
@@ -537,7 +528,7 @@ async def get_alerts_by_priority(
 async def search_alerts(
     request: AlertSearchRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Search alerts with advanced filters.
@@ -591,7 +582,7 @@ async def search_alerts(
 @router.get("/stats/summary", response_model=AlertStatsResponse)
 async def get_alert_stats_summary(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get alert statistics summary.

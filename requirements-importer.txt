@@ -1,0 +1,5 @@
+# Optional, isolated dependencies for the reviewed MySQL-to-MongoDB import utility.
+# These are not part of the application's runtime requirements.
+SQLAlchemy>=2.0,<3
+PyMySQL>=1.1,<2
+pymongo>=4.10,<5

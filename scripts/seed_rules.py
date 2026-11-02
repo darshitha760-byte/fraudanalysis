@@ -12,8 +12,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from sqlalchemy.orm import Session
-from app.db.database import SessionLocal, Base, engine
+from pymongo.database import Database
+from app.db.database import close_db, get_database, initialize_database, insert_document
 from app.models.fraud_rule import FraudRule
 from app.services.fraud_engine import FraudEngine
 
@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def seed_fraud_rules(db: Session) -> dict:
+def seed_fraud_rules(db: Database) -> dict:
     """
     Seed default fraud rules into database.
     
@@ -48,9 +48,7 @@ def seed_fraud_rules(db: Session) -> dict:
             stats["total_rules"] += 1
             
             # Check if rule already exists
-            existing = db.query(FraudRule).filter(
-                FraudRule.rule_id == rule_id
-            ).first()
+            existing = db["fraud_rules"].find_one({"rule_id": rule_id})
             
             if existing:
                 logger.info(f"Rule {rule_id} already exists - skipping")
@@ -78,9 +76,12 @@ def seed_fraud_rules(db: Session) -> dict:
                     notes=f"Default fraud detection rule: {rule_data['description']}"
                 )
                 
-                db.add(rule)
-                db.commit()
-                db.refresh(rule)
+                inserted = insert_document(
+                    db,
+                    "fraud_rules",
+                    rule.model_dump(exclude={"id", "created_at", "updated_at"}),
+                )
+                rule = FraudRule.model_validate(inserted)
                 
                 logger.info(
                     f"Created rule {rule_id}: {rule.name} "
@@ -89,7 +90,6 @@ def seed_fraud_rules(db: Session) -> dict:
                 stats["created"] += 1
             
             except Exception as e:
-                db.rollback()
                 logger.error(f"Failed to create rule {rule_id}: {e}")
                 stats["errors"] += 1
         
@@ -114,11 +114,9 @@ def main():
     """Main entry point for seed script."""
     logger.info("Initializing database session...")
     
-    db = SessionLocal()
-    
     try:
-        # Ensure tables exist
-        Base.metadata.create_all(bind=engine)
+        db = get_database()
+        initialize_database(db)
         
         # Seed rules
         stats = seed_fraud_rules(db)
@@ -136,7 +134,7 @@ def main():
         sys.exit(1)
     
     finally:
-        db.close()
+        close_db()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,11 @@ export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
 
+// Set VITE_API_BASE_URL to the deployed API origin (for example,
+// https://<render-service>.onrender.com) in the Vercel project settings.
+// The relative fallback remains useful with the local Vite proxy.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/backend").replace(/\/+$/, "");
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
@@ -18,7 +23,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (token) headers.set("Authorization", `Bearer ${token}`);
   let response: Response;
   try {
-    response = await fetch(`/backend${path}`, {
+    response = await fetch(`${API_BASE_URL}${path}`, {
       ...options, headers, signal: options.signal || AbortSignal.timeout(330000),
     });
   } catch (error) {

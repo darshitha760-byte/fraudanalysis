@@ -8,9 +8,8 @@ import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
 from fastapi import HTTPException, status, Depends, Header
-from sqlalchemy.orm import Session
 from app.core.config import get_settings
-from app.db.database import get_db
+from app.db.database import from_bson, get_db
 
 
 # Initialize password hasher with Argon2
@@ -154,7 +153,7 @@ def get_user_role_from_token(token: str) -> str:
 
 async def get_current_user(
     authorization: str = Header(None),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
     """
     Dependency function to get current authenticated user from JWT token.
@@ -188,15 +187,15 @@ async def get_current_user(
     # Import here to avoid circular imports
     from app.models import User
     
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    document = db["users"].find_one({"id": user_id})
+    if not document:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    return user
+    return User.model_validate(from_bson(document))
 
 
 def require_role(role: str):

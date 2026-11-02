@@ -17,7 +17,7 @@ def test_registration_creates_viewer_with_hashed_password(test_client, test_sess
     assert response.json()["email"] == "new.viewer@example.com"
     assert response.json()["role"] == UserRole.VIEWER.value
 
-    user = test_session.query(User).filter_by(email="new.viewer@example.com").one()
+    user = User.model_validate(test_session["users"].find_one({"email": "new.viewer@example.com"}))
     assert user.role == UserRole.VIEWER
     assert user.is_active is True
     assert user.password_hash != "SecurePass123"

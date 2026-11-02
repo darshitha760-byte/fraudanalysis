@@ -10,7 +10,8 @@ from typing import Tuple, Dict, Optional, List
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sqlalchemy.orm import Session
+from pymongo.database import Database
+from app.db.database import from_bson
 import logging
 
 logger = logging.getLogger(__name__)
@@ -36,29 +37,25 @@ class DataPreprocessor:
     
     @staticmethod
     def load_data(
-        session: Session, fraud_label_only: bool = True, limit: Optional[int] = None
+        session: Database, fraud_label_only: bool = True, limit: Optional[int] = None
     ) -> pd.DataFrame:
         """
         Load transaction data from database.
         
         Args:
-            session: SQLAlchemy database session
+            session: MongoDB database handle
             fraud_label_only: If True, only load transactions with known fraud labels
         
         Returns:
             DataFrame with transaction data
         """
-        from app.models import Transaction
-        
-        query = session.query(Transaction)
-        
-        if fraud_label_only:
-            query = query.filter(Transaction.fraud_label.isnot(None))
-        
+        query = {"fraud_label": {"$ne": None}} if fraud_label_only else {}
+        cursor = session["transactions"].find(query).sort(
+            [("transaction_date", -1), ("id", -1)]
+        )
         if limit is not None:
-            from app.models import Transaction
-            query = query.order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(limit)
-        transactions = query.all()
+            cursor = cursor.limit(limit)
+        transactions = [from_bson(document) for document in cursor]
         
         if not transactions:
             logger.warning("No transactions found in database")
@@ -67,18 +64,18 @@ class DataPreprocessor:
         data = []
         for t in transactions:
             data.append({
-                'transaction_id': t.transaction_id,
-                'customer_id': t.customer_id,
-                'transaction_date': t.transaction_date,
-                'amount': float(t.amount),
-                'merchant_category': t.merchant_category or 'other',
-                'transaction_type': t.transaction_type,
-                'payment_method': t.payment_method,
-                'location_country': t.location_country or 'US',
-                'location_city': t.location_city or 'Unknown',
-                'device_id': t.device_id,
-                'channel': t.channel or 'online',
-                'fraud_label': int(t.fraud_label) if t.fraud_label is not None else None,
+                'transaction_id': t.get('transaction_id'),
+                'customer_id': t.get('customer_id'),
+                'transaction_date': t.get('transaction_date'),
+                'amount': float(t.get('amount', 0)),
+                'merchant_category': t.get('merchant_category') or 'other',
+                'transaction_type': t.get('transaction_type'),
+                'payment_method': t.get('payment_method'),
+                'location_country': t.get('location_country') or 'US',
+                'location_city': t.get('location_city') or 'Unknown',
+                'device_id': t.get('device_id'),
+                'channel': t.get('channel') or 'online',
+                'fraud_label': int(t['fraud_label']) if t.get('fraud_label') is not None else None,
             })
         
         df = pd.DataFrame(data)

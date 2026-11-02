@@ -28,9 +28,6 @@ Pillow>=10.0.1
 # Environment & Configuration
 python-dotenv>=1.0.0
 
-# Optional: Database support (if needed)
-SQLAlchemy>=2.0.23
-
 # Optional: Caching
 redis>=5.0.0
 

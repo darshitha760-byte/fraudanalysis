@@ -6,8 +6,9 @@ Orchestrates full pipeline from transaction input to alert/case creation.
 import logging
 from typing import Dict, List, Any, Optional
 from decimal import Decimal
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
+from app.db.database import from_bson
 from app.models.transaction import Transaction
 from app.models.fraud_alert import FraudAssessment, FraudAlert
 from app.models.case import InvestigationCase
@@ -38,7 +39,7 @@ class PipelineService:
     
     @staticmethod
     def process_transaction_pipeline(
-        session: Session,
+        session: Database,
         transaction_id: int,
         user_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -57,9 +58,8 @@ class PipelineService:
             logger.info(f"Starting pipeline for transaction {transaction_id}")
             
             # Step 1: Load transaction
-            transaction = session.query(Transaction).filter(
-                Transaction.id == transaction_id
-            ).first()
+            raw_transaction = session["transactions"].find_one({"id": transaction_id})
+            transaction = Transaction.model_validate(from_bson(raw_transaction)) if raw_transaction else None
             
             if not transaction:
                 logger.error(f"Transaction {transaction_id} not found")
@@ -94,7 +94,7 @@ class PipelineService:
                 "customer_id": transaction.customer_id,
             }
             
-            ml_result = ml_service.predict_transaction(transaction_features)
+            ml_result = ml_service.predict_transaction(transaction_features, database=session)
             ml_score = ml_result.get("probability", 0) if ml_result.get("probability") is not None else 0
             if isinstance(ml_score, (int, float)):
                 ml_score = ml_score * 100 if ml_score <= 1 else ml_score  # Convert 0-1 to 0-100
@@ -137,42 +137,21 @@ class PipelineService:
             if risk_result.get("risk_level") == "HIGH" and alert_result:
                 try:
                     # Get or create analyst user
-                    analyst_user = session.query(User).filter(
-                        User.role == UserRole.ANALYST
-                    ).first()
-                    
-                    if not analyst_user:
-                        # Create default analyst for testing
-                        analyst_user = User(
-                            username="default_analyst",
-                            email="analyst@system.local",
-                            full_name="System Analyst",
-                            role=UserRole.ANALYST,
-                            hashed_password="system"
+                    analyst_user = session["users"].find_one({"role": UserRole.ANALYST.value})
+                    if analyst_user:
+                        case_result = CaseService.create_case_from_alert(
+                            session=session,
+                            alert_id=alert_result.get("alert_id"),
+                            case_type="FRAUD_CONFIRMED",
+                            assigned_to=analyst_user["id"],
+                            summary=f"High-risk transaction: {len(triggered_rules)} rules triggered",
                         )
-                        session.add(analyst_user)
-                        session.flush()
-                    
-                    case_result = CaseService.create_case_from_alert(
-                        session=session,
-                        alert_id=alert_result.get("alert_id"),
-                        case_type="FRAUD_CONFIRMED",
-                        assigned_to=analyst_user.id,
-                        summary=f"High-risk transaction: {len(triggered_rules)} rules triggered"
-                    )
-                    logger.info(f"Investigation case created")
+                        logger.info("Investigation case created")
                 except Exception as e:
                     logger.warning(f"Could not create case: {e}")
                     case_result = None
             
-            # Step 7: Commit transaction
-            try:
-                session.commit()
-                logger.info(f"Pipeline completed successfully for transaction {transaction_id}")
-            except Exception as e:
-                session.rollback()
-                logger.error(f"Error committing pipeline results: {e}")
-                raise
+            logger.info("Pipeline completed successfully for transaction %s", transaction_id)
             
             # Return comprehensive results
             return {
@@ -199,7 +178,6 @@ class PipelineService:
             }
         except Exception as e:
             logger.error(f"Pipeline error for transaction {transaction_id}: {e}", exc_info=True)
-            session.rollback()
             return {
                 "success": False,
                 "transaction_id": transaction_id,
@@ -208,7 +186,7 @@ class PipelineService:
     
     @staticmethod
     def batch_process_transactions(
-        session: Session,
+        session: Database,
         transaction_ids: List[int],
         user_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -267,7 +245,7 @@ class PipelineService:
     
     @staticmethod
     def reprocess_alert(
-        session: Session,
+        session: Database,
         alert_id: int,
         user_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -286,9 +264,8 @@ class PipelineService:
         logger.info(f"Reprocessing alert {alert_id}")
         
         # Get the alert
-        alert = session.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
+        document = session["fraud_alerts"].find_one({"id": alert_id})
+        alert = FraudAlert.model_validate(from_bson(document)) if document else None
         
         if not alert:
             raise ValueError(f"Alert {alert_id} not found")

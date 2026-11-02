@@ -6,12 +6,12 @@ import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
 from app.models.case import InvestigationCase
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -39,10 +39,7 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 class TestAnalyticsAPI:
@@ -51,9 +48,10 @@ class TestAnalyticsAPI:
     def test_dashboard_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/dashboard endpoint."""
         # Create some data
@@ -68,9 +66,7 @@ class TestAnalyticsAPI:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-
-        db.commit()
+            insert_test_document(db, txn)
 
         # Call endpoint
         response = client.get("/api/analytics/dashboard", headers=auth_headers)
@@ -87,9 +83,10 @@ class TestAnalyticsAPI:
     def test_transactions_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/transactions endpoint."""
         # Create transactions with various amounts
@@ -105,9 +102,7 @@ class TestAnalyticsAPI:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-
-        db.commit()
+            insert_test_document(db, txn)
 
         # Call endpoint
         response = client.get("/api/analytics/transactions", headers=auth_headers)
@@ -120,9 +115,10 @@ class TestAnalyticsAPI:
     def test_alerts_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/alerts endpoint."""
         # Create transaction and alerts
@@ -136,15 +132,15 @@ class TestAnalyticsAPI:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.flush()
+        insert_test_document(db, txn)
 
         # Create only one alert (transaction_id is unique on FraudAlert)
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, txn.id, sample_customer.id, risk_score=50
         )
-        alert.alert_status = "pending"
-        db.commit()
+        db["fraud_alerts"].update_one(
+            {"id": alert.id}, {"$set": {"alert_status": "pending"}}
+        )
 
         # Call endpoint
         response = client.get("/api/analytics/alerts", headers=auth_headers)
@@ -157,9 +153,10 @@ class TestAnalyticsAPI:
     def test_customers_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/customers endpoint."""
         # Create multiple customers with transactions
@@ -170,8 +167,7 @@ class TestAnalyticsAPI:
                 email=f"multi{i}@example.com",
                 country="US"
             )
-            db.add(customer)
-            db.flush()
+            customer = insert_test_document(db, customer)
 
             for j in range(2):
                 txn = Transaction(
@@ -184,9 +180,7 @@ class TestAnalyticsAPI:
                     merchant_name="Test",
                     merchant_id="M001"
                 )
-                db.add(txn)
-
-        db.commit()
+                insert_test_document(db, txn)
 
         # Call endpoint
         response = client.get("/api/analytics/customers", headers=auth_headers)
@@ -198,9 +192,10 @@ class TestAnalyticsAPI:
     def test_trends_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/trends endpoint."""
         # Create transactions across multiple days
@@ -217,9 +212,7 @@ class TestAnalyticsAPI:
                     merchant_name="Test",
                     merchant_id="M001"
                 )
-                db.add(txn)
-
-        db.commit()
+                insert_test_document(db, txn)
 
         # Call endpoint
         response = client.get("/api/analytics/trends", headers=auth_headers)
@@ -231,9 +224,10 @@ class TestAnalyticsAPI:
     def test_anomalies_endpoint(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
-        auth_headers: dict
+        auth_headers: dict,
+        mongo_server_only,
     ):
         """Test /api/analytics/anomalies endpoint."""
         # Create some anomalous transactions
@@ -248,9 +242,7 @@ class TestAnalyticsAPI:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-
-        db.commit()
+            insert_test_document(db, txn)
 
         # Call endpoint
         response = client.get("/api/analytics/anomalies", headers=auth_headers)
@@ -260,7 +252,7 @@ class TestAnalyticsAPI:
         assert isinstance(data, list) or "anomalies" in data
 
     def test_fraud_rate_endpoint(
-        self, client: TestClient, db: Session, auth_headers: dict
+        self, client: TestClient, db, auth_headers: dict
     ):
         """Test /api/analytics/fraud-rate endpoint."""
         # Call endpoint
@@ -272,7 +264,7 @@ class TestAnalyticsAPI:
         assert "false_positive_rate" in data or "rejection_rate" in data
 
     def test_performance_endpoint(
-        self, client: TestClient, db: Session, auth_headers: dict
+        self, client: TestClient, db, auth_headers: dict
     ):
         """Test /api/analytics/performance endpoint."""
         # Call endpoint
@@ -283,7 +275,7 @@ class TestAnalyticsAPI:
         assert "average_review_time" in data or "performance_metrics" in data
 
     def test_export_endpoint(
-        self, client: TestClient, db: Session, sample_customer: Customer, auth_headers: dict
+        self, client: TestClient, db, sample_customer: Customer, auth_headers: dict
     ):
         """Test /api/analytics/export endpoint."""
         # Create some data
@@ -297,8 +289,7 @@ class TestAnalyticsAPI:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Call endpoint with JSON format
         response = client.get("/api/analytics/export?format=json", headers=auth_headers)
@@ -308,7 +299,7 @@ class TestAnalyticsAPI:
     def test_analytics_with_time_filter(
         self,
         client: TestClient,
-        db: Session,
+        db,
         sample_customer: Customer,
         auth_headers: dict
     ):
@@ -324,7 +315,7 @@ class TestAnalyticsAPI:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(old_txn)
+        insert_test_document(db, old_txn)
 
         # Create recent transaction
         recent_txn = Transaction(
@@ -337,8 +328,7 @@ class TestAnalyticsAPI:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(recent_txn)
-        db.commit()
+        insert_test_document(db, recent_txn)
 
         # Call endpoint with 7-day filter
         response = client.get("/api/analytics/transactions?days=7", headers=auth_headers)

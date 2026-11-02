@@ -100,23 +100,27 @@ class TestJWTTokenSecurity:
 
 
 class TestSQLInjectionPrevention:
-    """Test SQL injection prevention through ORM usage."""
+    """Test MongoDB filter construction and ensure runtime SQL persistence is absent."""
     
     def test_orm_parameterized_queries(self):
-        """Verify ORM is used for all database queries."""
-        from app.db.database import get_engine
-        
-        engine = get_engine()
-        assert engine is not None
-        assert 'sqlite' in str(engine.url) or 'mysql' in str(engine.url)
+        """Search strings remain literal MongoDB values, not injected regex operators."""
+        from app.services.transaction_service import TransactionService
+
+        query = TransactionService.build_query(transaction_id=".*")
+        assert query["transaction_id"] == {"$regex": r"\.\*", "$options": "i"}
     
     def test_no_raw_sql_queries(self):
-        """Verify no raw SQL strings are constructed with user input."""
-        import os
-        
-        # Check main app files for potential SQL injection vulnerabilities
-        app_dir = 'app'
-        assert os.path.exists(app_dir)
+        """Active application modules must not contain SQL persistence dependencies."""
+        from pathlib import Path
+
+        app_dir = Path(__file__).resolve().parents[1] / "app"
+        assert app_dir.is_dir()
+        active_files = list(app_dir.rglob("*.py"))
+        assert active_files
+        assert not [
+            str(path) for path in active_files
+            if "sqlalchemy" in path.read_text(encoding="utf-8").lower()
+        ]
 
 
 class TestXSSPrevention:
@@ -257,20 +261,15 @@ class TestInputValidation:
     """Test input validation and sanitization."""
     
     def test_string_length_validation(self):
-        """Test that string inputs are validated for length."""
-        # SQLAlchemy ORM models have column constraints, verify they exist
-        from app.models.customer import Customer
-        from sqlalchemy import inspect
-        
-        # Check that Customer model has constraints on string columns
-        mapper = inspect(Customer)
-        columns = mapper.columns
-        
-        # Verify name column has String type with length limit
-        name_col = columns.get('name')
-        assert name_col is not None
-        # SQLAlchemy String columns should have type with length
-        assert name_col.type is not None
+        """Request schemas retain bounded text validation after persistence migration."""
+        from pydantic import ValidationError
+        from app.schemas import UserCreate
+
+        with pytest.raises(ValidationError):
+            UserCreate(
+                email="risk@example.com", full_name="x" * 256,
+                password="valid-password", role="analyst",
+            )
     
     def test_email_validation(self):
         """Test that email inputs are validated."""

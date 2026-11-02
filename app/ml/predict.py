@@ -10,6 +10,9 @@ import joblib
 import json
 import logging
 
+from app.core.config import get_settings
+from app.db.database import get_database
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,11 +21,22 @@ class ModelPredictor:
     
     MODELS_DIR = Path(__file__).parent.parent.parent / "models"
     
-    def __init__(self):
+    def __init__(self, database=None):
         """Initialize predictor (lazy load models)."""
         self.model = None
         self.model_version = None
         self.model_name = None
+        self.database = database
+        self.metadata = {}
+        self.scaler = None
+
+    def _artifact_database(self):
+        if self.database is not None:
+            return self.database
+        settings = get_settings()
+        if settings.model_storage_backend.lower() == "atlas":
+            self.database = get_database()
+        return self.database
     
     @staticmethod
     def load_model(model_path: str) -> Optional[Any]:
@@ -56,6 +70,12 @@ class ModelPredictor:
         Returns:
             Tuple of (model_path, model_name) or None if no models found
         """
+        settings = get_settings()
+        if settings.model_storage_backend.lower() == "atlas":
+            from app.ml.artifact_store import latest_model_id
+
+            database = get_database()
+            return latest_model_id(database, settings.model_artifact_signing_key)
         models_dir = ModelPredictor.MODELS_DIR
         
         if not models_dir.exists():
@@ -92,20 +112,77 @@ class ModelPredictor:
             True if model loaded successfully, False otherwise
         """
         if model_path is None:
+            database = self._artifact_database()
+            settings = get_settings()
+            if database is not None and settings.model_storage_backend.lower() == "atlas":
+                from app.ml.artifact_store import latest_model_id
+
+                result = latest_model_id(database, settings.model_artifact_signing_key)
+                if result is None:
+                    logger.warning("No authenticated model artifacts found")
+                    return False
+                model_path, self.model_name = result
+                try:
+                    from app.ml.artifact_store import load_model_artifacts
+
+                    loaded = load_model_artifacts(
+                        database, model_path, settings.model_artifact_signing_key
+                    )
+                except Exception:
+                    logger.exception("Unable to load authenticated model artifact.")
+                    return False
+                if loaded is None:
+                    return False
+                self.model, self.scaler, self.metadata = loaded
+                self.model_version = model_path.split("_v", 1)[-1].split("_", 1)[0]
+                return True
             result = self.get_latest_model()
             if result is None:
                 logger.warning("No trained models found")
                 return False
             model_path, self.model_name = result
         else:
+            database = self._artifact_database()
+            if database is not None and get_settings().model_storage_backend.lower() == "atlas":
+                try:
+                    from app.ml.artifact_store import load_model_artifacts
+
+                    loaded = load_model_artifacts(
+                        database, model_path, get_settings().model_artifact_signing_key
+                    )
+                except Exception:
+                    logger.exception("Unable to load authenticated model artifact.")
+                    return False
+                if loaded is None:
+                    return False
+                self.model, self.scaler, self.metadata = loaded
+                self.model_name = self.metadata.get("model_type")
+                self.model_version = model_path.split("_v", 1)[-1].split("_", 1)[0]
+                return True
             self.model_name = Path(model_path).stem.split('_v')[0]
         
         self.model = self.load_model(model_path)
         
         if self.model is None:
             return False
-        
-        self.model_version = Path(model_path).stem.split('_v')[1] if '_v' in Path(model_path).stem else 'unknown'
+
+        model_file = Path(model_path)
+        metadata_path = model_file.with_suffix(".json")
+        try:
+            if metadata_path.is_file():
+                self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            scaler_name = self.metadata.get("scaler_artifact")
+            if scaler_name:
+                scaler_path = (ModelPredictor.MODELS_DIR / scaler_name).resolve()
+                if scaler_path.parent != ModelPredictor.MODELS_DIR.resolve():
+                    logger.error("Model metadata references an invalid scaler artifact.")
+                    return False
+                self.scaler = joblib.load(scaler_path)
+        except Exception:
+            logger.exception("Unable to load model preprocessing metadata.")
+            return False
+
+        self.model_version = model_file.stem.split('_v')[1] if '_v' in model_file.stem else 'unknown'
         logger.info(f"Active model: {self.model_name} v{self.model_version}")
         
         return True
@@ -240,8 +317,7 @@ class ModelPredictor:
             if result:
                 iso_model_path, iso_model_name = result
                 if iso_model_name == 'isolation_forest':
-                    self.model = self.load_model(iso_model_path)
-                    self.model_name = iso_model_name
+                    self.load_active_model(iso_model_path)
         
         if self.model is None or self.model_name != 'isolation_forest':
             return {

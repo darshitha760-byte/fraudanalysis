@@ -185,7 +185,6 @@ def setup_logging(
         perf_logger.propagate = False
     
     # Configure third-party loggers
-    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     

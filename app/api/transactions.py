@@ -5,14 +5,12 @@ Handles transaction CRUD, listing, filtering, and batch import.
 
 import logging
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
-from sqlalchemy.orm import Session, joinedload
-
-from app.db.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Query, UploadFile, File
+from app.db.database import from_bson, get_db, insert_document
 from app.schemas import TransactionCreate
-from app.models.fraud_alert import FraudAssessment, TriggeredRule
+from app.models.fraud_alert import FraudAssessment
 from app.services.transaction_service import TransactionService
 from app.services.fraud_engine import FraudEngine
 from app.core.security import get_current_user
@@ -24,7 +22,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 @router.get("", response_model=dict)
 async def list_transactions(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     _current_user = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=500, description="Results per page"),
@@ -64,7 +62,7 @@ async def list_transactions(
                 start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Invalid start_date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"
                 )
         
@@ -73,7 +71,7 @@ async def list_transactions(
                 end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
             except ValueError:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail="Invalid end_date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"
                 )
         
@@ -92,6 +90,11 @@ async def list_transactions(
             transaction_id=transaction_id
         )
         
+        assessment_by_transaction = {
+            doc["transaction_id"]: doc for doc in db["fraud_assessments"].find(
+                {"transaction_id": {"$in": [t.id for t in transactions]}}
+            )
+        }
         return {
             "data": [
                 {
@@ -103,14 +106,10 @@ async def list_transactions(
                     "transaction_date": t.transaction_date.isoformat(),
                     "status": t.status,
                     "currency": t.currency,
-                    "risk_score": (
-                        float(t.fraud_assessments[0].risk_score)
-                        if t.fraud_assessments else None
-                    ),
-                    "risk_level": (
-                        t.fraud_assessments[0].risk_category
-                        if t.fraud_assessments else None
-                    )
+                    "risk_score": float(assessment_by_transaction[t.id]["risk_score"].to_decimal())
+                    if t.id in assessment_by_transaction else None,
+                    "risk_level": assessment_by_transaction[t.id]["risk_category"]
+                    if t.id in assessment_by_transaction else None,
                 }
                 for t in transactions
             ],
@@ -127,15 +126,15 @@ async def list_transactions(
     except Exception as e:
         logger.error(f"List transactions failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list transactions"
         )
 
 
-@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=dict, status_code=http_status.HTTP_201_CREATED)
 async def create_transaction(
     transaction_create: TransactionCreate,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Create a new transaction with validation and fraud assessment."""
@@ -161,24 +160,24 @@ async def create_transaction(
             rules_triggered_count=len(triggered_rules),
             assessment_timestamp=datetime.utcnow()
         )
-        db.add(assessment)
+        assessment = FraudAssessment.model_validate(insert_document(
+            db, "fraud_assessments",
+            assessment.model_dump(exclude={"id", "created_at", "updated_at"}),
+        ))
         
         # Create triggered rule records
         for rule_result in triggered_rules:
-            triggered = TriggeredRule(
-                transaction_id=transaction.id,
-                fraud_assessment_id=assessment.id,
-                fraud_rule_id=db.query(FraudRule.id).filter(
-                    FraudRule.rule_id == rule_result.rule_id
-                ).scalar(),
-                triggered_rule_id=rule_result.rule_id,
-                triggered_rule_name=rule_result.rule_name,
-                explanation=rule_result.explanation,
-                triggered_at=datetime.utcnow()
-            )
-            db.add(triggered)
-        
-        db.commit()
+            rule_doc = db["fraud_rules"].find_one({"rule_id": rule_result.rule_id})
+            triggered_values = {
+                "transaction_id": transaction.id,
+                "assessment_id": assessment.id,
+                "rule_id": rule_doc["id"] if rule_doc else 0,
+                "triggered_rule_id": rule_result.rule_id,
+                "triggered_rule_name": rule_result.rule_name,
+                "rule_explanation": rule_result.explanation,
+                "trigger_timestamp": datetime.now(timezone.utc),
+            }
+            insert_document(db, "triggered_rules", triggered_values)
         
         return {
             "id": transaction.id,
@@ -203,13 +202,13 @@ async def create_transaction(
     
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
     except Exception as e:
         logger.error(f"Create transaction failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create transaction"
         )
 
@@ -217,7 +216,7 @@ async def create_transaction(
 @router.get("/{transaction_id}", response_model=dict)
 async def get_transaction(
     transaction_id: int,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     _current_user = Depends(get_current_user)
 ):
     """Get transaction details with fraud assessment."""
@@ -226,28 +225,24 @@ async def get_transaction(
         
         if not transaction:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Transaction not found"
             )
         
         # Get assessment if exists
-        assessment = db.query(FraudAssessment).filter(
-            FraudAssessment.transaction_id == transaction.id
-        ).first()
+        assessment_doc = db["fraud_assessments"].find_one({"transaction_id": transaction.id})
+        assessment = FraudAssessment.model_validate(from_bson(assessment_doc)) if assessment_doc else None
         
         triggered_rules = []
         if assessment:
-            rules = db.query(TriggeredRule).options(joinedload(TriggeredRule.rule)).filter(
-                TriggeredRule.assessment_id == assessment.id
-            ).all()
-            triggered_rules = [
-                {
-                    "rule_id": r.rule.rule_id,
-                    "rule_name": r.rule.name,
-                    "explanation": r.rule_explanation
-                }
-                for r in rules
-            ]
+            rules = db["triggered_rules"].find({"assessment_id": assessment.id})
+            for record in rules:
+                rule = db["fraud_rules"].find_one({"id": record.get("rule_id")})
+                triggered_rules.append({
+                    "rule_id": record.get("triggered_rule_id") or (rule or {}).get("rule_id"),
+                    "rule_name": record.get("triggered_rule_name") or (rule or {}).get("name"),
+                    "explanation": record.get("rule_explanation") or record.get("explanation", ""),
+                })
         
         return {
             "id": transaction.id,
@@ -270,16 +265,16 @@ async def get_transaction(
     except Exception as e:
         logger.error(f"Get transaction failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get transaction"
         )
 
 
-@router.post("/import", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/import", response_model=dict, status_code=http_status.HTTP_202_ACCEPTED)
 async def import_transactions(
     file: UploadFile = File(...),
     idempotency_key: str = Query(..., description="Unique key for idempotency"),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -305,7 +300,7 @@ async def import_transactions(
             file_size += len(chunk)
             if file_size > MAX_FILE_SIZE:
                 raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail="File size exceeds 10MB limit"
                 )
             content += chunk.decode('utf-8')
@@ -333,16 +328,12 @@ async def import_transactions(
         raise
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
     except Exception as e:
         logger.error(f"Import transactions failed: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to import transactions"
         )
-
-
-# Import FraudRule model for the endpoint
-from app.models.fraud_rule import FraudRule

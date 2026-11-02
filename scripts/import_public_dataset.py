@@ -9,13 +9,14 @@ import logging
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.models.customer import Customer
 from app.models.transaction import Transaction
-from app.db.database import SessionLocal
+from app.db.database import close_db, get_database, insert_document, next_id, to_bson
 
 logging.basicConfig(
     level=logging.INFO,
@@ -203,39 +204,24 @@ class PublicDatasetImporter:
     @staticmethod
     def ensure_customers_exist(df, session):
         """Ensure customer records exist for all customer IDs."""
-        try:
-            logger.info("Ensuring customer records exist...")
-            
-            customer_ids = df['customer_id'].unique()
-            existing_customers = session.query(Customer).all()
-            existing_ids = {c.customer_id for c in existing_customers}
-            
-            missing_ids = set(customer_ids) - existing_ids
-            
-            if missing_ids:
-                logger.info(f"Creating {len(missing_ids)} missing customer records...")
-                
-                new_customers = []
-                for cid in missing_ids:
-                    customer = Customer(
-                        customer_id=cid,
-                        customer_name=f'Customer_{cid}',
-                        email=f'customer_{cid}@example.com',
-                        account_created_date=datetime(2022, 1, 1),
-                        account_status='active'
-                    )
-                    new_customers.append(customer)
-                
-                session.add_all(new_customers)
-                session.commit()
-                logger.info(f"Created {len(new_customers)} customer records")
-            else:
-                logger.info("All customer records already exist")
-        
-        except Exception as e:
-            logger.error(f"Error ensuring customers exist: {e}")
-            session.rollback()
-            raise
+        logger.info("Ensuring customer records exist...")
+        mapping = {}
+        for cid in df["customer_id"].unique():
+            numeric_id = int(cid)
+            external_id = f"KAGGLE-CUST-{numeric_id:06d}"
+            existing = session["customers"].find_one({"customer_id": external_id})
+            if existing is None:
+                existing = insert_document(
+                    session,
+                    "customers",
+                    Customer(
+                        customer_id=external_id,
+                        name=f"Customer_{numeric_id}",
+                        email=f"customer_{numeric_id}@example.com",
+                    ).model_dump(exclude={"id", "created_at", "updated_at"}),
+                )
+            mapping[numeric_id] = int(existing["id"])
+        return mapping
     
     @staticmethod
     def insert_into_database(df, session, batch_size=1000):
@@ -243,59 +229,61 @@ class PublicDatasetImporter:
         try:
             logger.info(f"Inserting {len(df)} transactions into database...")
             
-            # Check for duplicates
-            existing_ids = {t.transaction_id for t in session.query(Transaction).all()}
-            df_new = df[~df['transaction_id'].isin(existing_ids)].copy()
-            
-            if len(df_new) == 0:
-                logger.info("All transactions already exist in database, skipping insert")
-                return 0
-            
-            logger.info(f"Inserting {len(df_new)} new transactions (skipping {len(df) - len(df_new)} duplicates)")
-            
-            # Ensure customers exist
-            PublicDatasetImporter.ensure_customers_exist(df_new, session)
-            
-            # Insert in batches
-            for i in range(0, len(df_new), batch_size):
-                batch = df_new.iloc[i:i+batch_size]
-                
-                transactions = []
-                for _, row in batch.iterrows():
-                    transaction = Transaction(
-                        transaction_id=row['transaction_id'],
-                        customer_id=row['customer_id'],
-                        transaction_date=row['transaction_date'],
-                        amount=float(row['amount']),
-                        merchant_category=row['merchant_category'],
-                        transaction_type=row['transaction_type'],
-                        payment_method=row['payment_method'],
-                        location_country=row['location_country'],
-                        location_city=row['location_city'],
-                        device_id=row['device_id'],
-                        channel=row['channel'],
-                        fraud_label=int(row['fraud_label'])
+            if batch_size < 1:
+                raise ValueError("batch_size must be positive")
+            customer_map = PublicDatasetImporter.ensure_customers_exist(df, session)
+            inserted_count = 0
+            for start in range(0, len(df), batch_size):
+                batch = df.iloc[start:start + batch_size]
+                ids = batch["transaction_id"].astype(str).tolist()
+                existing_ids = set(
+                    session["transactions"].distinct(
+                        "transaction_id", {"transaction_id": {"$in": ids}}
                     )
-                    transactions.append(transaction)
-                
-                session.add_all(transactions)
-                session.commit()
-                
-                progress = min(i + batch_size, len(df_new))
-                logger.info(f"  Inserted {progress}/{len(df_new)} transactions")
-            
-            logger.info(f"Successfully inserted {len(df_new)} transactions")
-            return len(df_new)
-        
-        except Exception as e:
-            logger.error(f"Error inserting transactions: {e}")
-            session.rollback()
+                )
+                documents = []
+                for _, row in batch.iterrows():
+                    external_id = str(row["transaction_id"])
+                    if external_id in existing_ids:
+                        continue
+                    transaction = Transaction(
+                        transaction_id=external_id,
+                        customer_id=customer_map[int(row["customer_id"])],
+                        transaction_date=row["transaction_date"].to_pydatetime()
+                        if hasattr(row["transaction_date"], "to_pydatetime")
+                        else row["transaction_date"],
+                        amount=Decimal(str(row["amount"])),
+                        merchant_category=row["merchant_category"],
+                        transaction_type=row["transaction_type"],
+                        payment_method=row["payment_method"],
+                        location_country=row["location_country"],
+                        location_city=row["location_city"],
+                        device_id=row["device_id"],
+                        channel=row["channel"],
+                        fraud_label=bool(row["fraud_label"]),
+                        is_synthetic=False,
+                    )
+                    document = transaction.model_dump(mode="python")
+                    document["id"] = next_id(session, "transactions")
+                    documents.append(to_bson(document))
+                if documents:
+                    session["transactions"].insert_many(documents, ordered=True)
+                    inserted_count += len(documents)
+                logger.info(
+                    "Processed public dataset batch %s/%s",
+                    min(start + batch_size, len(df)),
+                    len(df),
+                )
+            logger.info("Inserted %s public-dataset transactions", inserted_count)
+            return inserted_count
+        except Exception:
+            logger.error("Public dataset insertion failed.")
             raise
     
     @staticmethod
     def import_kaggle_dataset():
         """Main pipeline to import Kaggle dataset."""
-        session = SessionLocal()
+        session = get_database()
         
         try:
             # Download
@@ -326,7 +314,7 @@ class PublicDatasetImporter:
             logger.error(f"Import pipeline failed: {e}", exc_info=True)
         
         finally:
-            session.close()
+            close_db()
 
 
 def main():
@@ -339,7 +327,7 @@ def main():
     
     args = parser.parse_args()
     
-    session = SessionLocal()
+    session = get_database()
     
     try:
         if args.csv:
@@ -365,7 +353,7 @@ def main():
         logger.info("="*80)
     
     finally:
-        session.close()
+        close_db()
 
 
 if __name__ == '__main__':

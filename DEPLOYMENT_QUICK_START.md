@@ -1,4 +1,10 @@
-# 🚀 Render & Vercel Deployment - Complete Setup Guide
+# Legacy Render & Vercel Deployment Notes — Superseded
+
+> **Do not execute the historical instructions below.** The active runtime
+> requires an already provisioned MongoDB deployment configured with
+> `MONGODB_URI` and `MONGODB_DATABASE`. Atlas provisioning, account/network
+> configuration, deployment, and live validation were not performed. Legacy
+> SQL/Alembic setup and seeding steps are not migration instructions.
 
 ## Overview
 

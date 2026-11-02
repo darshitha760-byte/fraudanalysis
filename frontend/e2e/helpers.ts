@@ -7,3 +7,9 @@ export async function login(page: Page, role = "admin") {
   await page.getByRole("button", { name: "Sign in to workspace" }).click();
   await expect(page.getByRole("heading", { name: "Risk operations overview" })).toBeVisible();
 }
+
+export async function logout(page: Page) {
+  await page.getByRole("button", { name: "User profile" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Sign out" }).click();
+}

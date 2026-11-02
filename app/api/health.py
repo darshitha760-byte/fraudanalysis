@@ -6,14 +6,16 @@ for monitoring and orchestration (Docker, Kubernetes, load balancers).
 """
 
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
 from typing import Dict, Any
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 
-from app.core.database import get_db
-from app.core.config import settings
+from app.db.database import get_db
+from app.core.config import get_settings
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/health", tags=["health"])
@@ -74,7 +76,7 @@ async def liveness() -> Dict[str, Any]:
 
 
 @router.get("/ready", tags=["monitoring"])
-async def readiness(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def readiness(db=Depends(get_db)) -> Dict[str, Any]:
     """
     Readiness check endpoint.
     
@@ -99,16 +101,6 @@ async def readiness(db: Session = Depends(get_db)) -> Dict[str, Any]:
             logger.error(f"Database check failed: {e}")
             dependencies_status["database"] = f"unavailable: {str(e)[:50]}"
             all_ready = False
-        
-        # Check Redis connectivity (if enabled)
-        if settings.redis_url:
-            try:
-                await _check_redis()
-                dependencies_status["cache"] = "ready"
-            except Exception as e:
-                logger.warning(f"Redis check failed: {e}")
-                dependencies_status["cache"] = f"unavailable: {str(e)[:50]}"
-                # Not critical - can proceed without cache
         
         # Check model files
         try:
@@ -146,7 +138,7 @@ async def readiness(db: Session = Depends(get_db)) -> Dict[str, Any]:
 
 
 @router.get("/detailed", tags=["monitoring"])
-async def detailed_health(db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def detailed_health(db=Depends(get_db)) -> Dict[str, Any]:
     """
     Detailed health check with comprehensive status.
     
@@ -182,20 +174,6 @@ async def detailed_health(db: Session = Depends(get_db)) -> Dict[str, Any]:
                 "error": str(e)[:100]
             }
         
-        # Redis details
-        if settings.redis_url:
-            try:
-                redis_status = await _check_redis()
-                details["dependencies"]["redis"] = {
-                    "status": "ok",
-                    "memory_usage": redis_status.get("memory", "unknown")
-                }
-            except Exception as e:
-                details["dependencies"]["redis"] = {
-                    "status": "error",
-                    "error": str(e)[:100]
-                }
-        
         # Models details
         try:
             model_status = await _check_models()
@@ -228,7 +206,7 @@ async def detailed_health(db: Session = Depends(get_db)) -> Dict[str, Any]:
 # Internal Health Check Functions
 # ============================================
 
-async def _check_database(db: Session) -> Dict[str, Any]:
+async def _check_database(db) -> Dict[str, Any]:
     """
     Check database connectivity and status.
     
@@ -242,16 +220,8 @@ async def _check_database(db: Session) -> Dict[str, Any]:
         Exception if database is unreachable
     """
     try:
-        from sqlalchemy import text
-        
-        # Execute simple query
-        result = db.execute(text("SELECT 1"))
-        result.close()
-        
-        return {
-            "status": "ok",
-            "pool_size": db.get_bind().pool.size() if hasattr(db.get_bind().pool, 'size') else 'unknown'
-        }
+        db.command("ping")
+        return {"status": "ok", "driver": "PyMongo"}
     
     except Exception as e:
         logger.error(f"Database check failed: {e}")
@@ -311,21 +281,11 @@ async def _check_models() -> Dict[str, Any]:
     import os
     
     try:
-        models_dir = settings.ml_model_dir or "./models"
-        
-        fraud_model_path = os.path.join(models_dir, "fraud_detection_model.pkl")
-        risk_model_path = os.path.join(models_dir, "risk_assessment_model.pkl")
-        
-        fraud_model_exists = os.path.exists(fraud_model_path)
-        risk_model_exists = os.path.exists(risk_model_path)
-        
-        if not fraud_model_exists or not risk_model_exists:
-            raise Exception(f"Missing models: fraud={fraud_model_exists}, risk={risk_model_exists}")
-        
+        models_dir = Path(__file__).resolve().parents[2] / "models"
+        model_count = len(list(models_dir.glob("*_v*.json"))) if models_dir.exists() else 0
         return {
             "status": "ok",
-            "fraud_model": fraud_model_exists,
-            "risk_model": risk_model_exists
+            "saved_model_count": model_count,
         }
     
     except Exception as e:

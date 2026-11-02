@@ -6,18 +6,16 @@ import sys
 import logging
 from pathlib import Path
 import getpass
-from datetime import datetime
 
 # Add the project root, not the scripts directory, so direct script execution can
 # resolve the app package both locally and in the API container.
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from app.db.database import close_db, get_database, insert_document
 from app.models import User
-from app.core.config import get_settings
 from app.core.security import hash_password
+from app.core.permissions import UserRole
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,35 +48,32 @@ def create_admin_user(
             logger.error("❌ Invalid email format")
             return False
         
-        # Create database connection
-        engine = create_engine(get_settings().database_url)
-        Session = sessionmaker(bind=engine)
-        session = Session()
-        
         # Check if user already exists
-        existing_user = session.query(User).filter(User.email == email).first()
+        db = get_database()
+        normalized_email = email.strip().lower()
+        existing_user = db["users"].find_one({"email": normalized_email})
         if existing_user:
             logger.error(f"❌ User with email '{email}' already exists")
-            session.close()
             return False
         
         # Validate password strength
         if len(password) < 8:
             logger.error("❌ Password must be at least 8 characters long")
-            session.close()
             return False
         
         # Create new admin user
         admin_user = User(
-            email=email,
+            email=normalized_email,
             password_hash=hash_password(password),
-            full_name=full_name or email.split("@")[0],
-            role="admin",
+            full_name=full_name or normalized_email.split("@")[0],
+            role=UserRole.ADMIN,
             is_active=True
         )
-        
-        session.add(admin_user)
-        session.commit()
+        document = insert_document(
+            db, "users",
+            admin_user.model_dump(exclude={"id", "created_at", "updated_at"}),
+        )
+        admin_user = User.model_validate(document)
         
         logger.info(f"✅ Admin user created successfully!")
         logger.info(f"   Email: {email}")
@@ -89,9 +84,11 @@ def create_admin_user(
         session.close()
         return True
         
-    except Exception as e:
-        logger.error(f"❌ Failed to create admin user: {str(e)}")
+    except Exception:
+        logger.error("❌ Failed to create admin user")
         return False
+    finally:
+        close_db()
 
 
 def prompt_for_admin_details() -> dict:

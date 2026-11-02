@@ -141,7 +141,7 @@ try {
     Write-Host "$Green# Access services$Reset"
     Write-Host "API:       http://localhost:8000"
     Write-Host "Dashboard: http://localhost:8501"
-    Write-Host "MySQL:     localhost:3306"
+    Write-Host "MongoDB:   configured by MONGODB_URI (not bundled)"
     Write-Host ""
     
     Write-Status "Docker build process completed successfully!" "INFO"

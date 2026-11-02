@@ -240,7 +240,7 @@ Start-Sleep -Seconds 15
 # Step 6: Verify services
 Write-Header "Step 6: Verifying Services"
 
-$services = @("mysql", "redis", "api", "dashboard")
+$services = @("redis", "api", "frontend", "dashboard")
 
 foreach ($service in $services) {
     $status = docker-compose ps $service 2>&1 | Select-String "Up" | Measure-Object | Select-Object -ExpandProperty Count
@@ -257,14 +257,14 @@ foreach ($service in $services) {
 if (-not $NoDatabaseSeed) {
     Write-Header "Step 7: Database Initialization"
     
-    Write-Info "Running database migrations..."
+    Write-Info "Checking MongoDB connectivity and initializing indexes..."
     docker-compose exec -T api python run_migrations.py 2>&1 | Select-Object -Last 3
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Success "Database migrations completed"
+        Write-Success "MongoDB connectivity verified and indexes initialized"
     }
     else {
-        Write-Warning "Database migrations may have issues (check logs)"
+        Write-Warning "MongoDB index initialization may have issues (check logs)"
     }
     
     Write-Info "Seeding sample data..."

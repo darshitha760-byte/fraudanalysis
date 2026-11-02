@@ -8,9 +8,9 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from app.db.database import get_db
+from app.db.database import from_bson, get_db, insert_document, to_bson
 from app.schemas import FraudRuleCreate, FraudRuleUpdate, FraudRuleResponse
 from app.models.fraud_rule import FraudRule
 from app.core.security import get_current_user
@@ -32,7 +32,7 @@ def check_admin(current_user) -> None:
 
 @router.get("", response_model=dict)
 async def list_fraud_rules(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
@@ -49,18 +49,15 @@ async def list_fraud_rules(
     - is_enabled: Filter by enabled status
     """
     try:
-        query = db.query(FraudRule)
-        
+        query = {}
         if rule_type:
-            query = query.filter(FraudRule.rule_type == rule_type)
+            query["rule_type"] = rule_type
         if is_enabled is not None:
-            query = query.filter(FraudRule.is_enabled == is_enabled)
-        
-        total_count = query.count()
-        
-        rules = query.order_by(FraudRule.rule_id).offset(
-            (page - 1) * limit
-        ).limit(limit).all()
+            query["is_enabled"] = is_enabled
+        collection = db["fraud_rules"]
+        total_count = collection.count_documents(query)
+        rules = [FraudRule.model_validate(from_bson(doc)) for doc in
+                 collection.find(query).sort("rule_id", 1).skip((page - 1) * limit).limit(limit)]
         
         return {
             "data": [
@@ -98,12 +95,13 @@ async def list_fraud_rules(
 @router.get("/{rule_id}", response_model=dict)
 async def get_fraud_rule(
     rule_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Get fraud rule details by rule ID."""
     try:
-        rule = db.query(FraudRule).filter(FraudRule.rule_id == rule_id).first()
+        document = db["fraud_rules"].find_one({"rule_id": rule_id})
+        rule = FraudRule.model_validate(from_bson(document)) if document else None
         
         if not rule:
             raise HTTPException(
@@ -144,7 +142,7 @@ async def get_fraud_rule(
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def create_fraud_rule(
     rule_create: FraudRuleCreate,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Create a new fraud rule (admin only)."""
@@ -152,9 +150,7 @@ async def create_fraud_rule(
     
     try:
         # Check if rule_id already exists
-        existing = db.query(FraudRule).filter(
-            FraudRule.rule_id == rule_create.rule_id
-        ).first()
+        existing = db["fraud_rules"].find_one({"rule_id": rule_create.rule_id})
         
         if existing:
             raise HTTPException(
@@ -174,9 +170,10 @@ async def create_fraud_rule(
             **rule_create.model_dump()
         )
         
-        db.add(rule)
-        db.commit()
-        db.refresh(rule)
+        rule = FraudRule.model_validate(insert_document(
+            db, "fraud_rules",
+            rule.model_dump(exclude={"id", "created_at", "updated_at"}),
+        ))
         
         logger.info(f"Fraud rule created: {rule.rule_id}")
         
@@ -196,8 +193,9 @@ async def create_fraud_rule(
     
     except HTTPException:
         raise
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail=f"Fraud rule {rule_create.rule_id} already exists")
     except Exception as e:
-        db.rollback()
         logger.error(f"Create fraud rule failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -209,14 +207,15 @@ async def create_fraud_rule(
 async def update_fraud_rule(
     rule_id: str,
     rule_update: FraudRuleUpdate,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Update fraud rule (admin only)."""
     check_admin(current_user)
     
     try:
-        rule = db.query(FraudRule).filter(FraudRule.rule_id == rule_id).first()
+        document = db["fraud_rules"].find_one({"rule_id": rule_id})
+        rule = FraudRule.model_validate(from_bson(document)) if document else None
         
         if not rule:
             raise HTTPException(
@@ -233,15 +232,13 @@ async def update_fraud_rule(
                 )
         
         # Update fields
-        update_data = rule_update.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(rule, field, value)
-        
-        # Increment version on update
-        rule.version = FraudRule.version + 1
-        
-        db.commit()
-        db.refresh(rule)
+        update_data = to_bson(rule_update.model_dump(exclude_unset=True))
+        update_data["updated_at"] = datetime.now().astimezone()
+        db["fraud_rules"].update_one(
+            {"rule_id": rule_id},
+            {"$set": update_data, "$inc": {"version": 1}},
+        )
+        rule = FraudRule.model_validate(from_bson(db["fraud_rules"].find_one({"rule_id": rule_id})))
         
         logger.info(f"Fraud rule updated: {rule.rule_id}")
         
@@ -262,7 +259,6 @@ async def update_fraud_rule(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Update fraud rule failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -273,14 +269,15 @@ async def update_fraud_rule(
 @router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_fraud_rule(
     rule_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Disable/soft delete fraud rule (admin only)."""
     check_admin(current_user)
     
     try:
-        rule = db.query(FraudRule).filter(FraudRule.rule_id == rule_id).first()
+        document = db["fraud_rules"].find_one({"rule_id": rule_id})
+        rule = FraudRule.model_validate(from_bson(document)) if document else None
         
         if not rule:
             raise HTTPException(
@@ -289,15 +286,16 @@ async def delete_fraud_rule(
             )
         
         # Soft delete by disabling
-        rule.is_enabled = False
-        db.commit()
+        db["fraud_rules"].update_one(
+            {"rule_id": rule_id},
+            {"$set": {"is_enabled": False, "updated_at": datetime.now().astimezone()}},
+        )
         
         logger.info(f"Fraud rule disabled: {rule.rule_id}")
     
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Delete fraud rule failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -308,14 +306,15 @@ async def delete_fraud_rule(
 @router.post("/{rule_id}/enable", response_model=dict)
 async def enable_fraud_rule(
     rule_id: str,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Enable a disabled fraud rule (admin only)."""
     check_admin(current_user)
     
     try:
-        rule = db.query(FraudRule).filter(FraudRule.rule_id == rule_id).first()
+        document = db["fraud_rules"].find_one({"rule_id": rule_id})
+        rule = FraudRule.model_validate(from_bson(document)) if document else None
         
         if not rule:
             raise HTTPException(
@@ -323,9 +322,11 @@ async def enable_fraud_rule(
                 detail=f"Fraud rule {rule_id} not found"
             )
         
-        rule.is_enabled = True
-        db.commit()
-        db.refresh(rule)
+        db["fraud_rules"].update_one(
+            {"rule_id": rule_id},
+            {"$set": {"is_enabled": True, "updated_at": datetime.now().astimezone()}},
+        )
+        rule = FraudRule.model_validate(from_bson(db["fraud_rules"].find_one({"rule_id": rule_id})))
         
         logger.info(f"Fraud rule enabled: {rule.rule_id}")
         
@@ -340,7 +341,6 @@ async def enable_fraud_rule(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(f"Enable fraud rule failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

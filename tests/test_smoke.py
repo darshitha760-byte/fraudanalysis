@@ -6,31 +6,22 @@ Basic health checks for all critical system components.
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from app.db.database import get_db, get_engine
 from app.models.transaction import Transaction
 from app.models.customer import Customer
-from app.main import app
+from conftest import insert_test_document
 
 
 class TestHealthCheck:
     """Test health check endpoints."""
     
-    def test_health_endpoint_exists(self):
+    def test_health_endpoint_exists(self, test_client):
         """Test that health check endpoint exists."""
-        from fastapi.testclient import TestClient
-        from app.main import app
-        
-        client = TestClient(app)
-        response = client.get("/health")
+        response = test_client.get("/health")
         assert response.status_code == 200
     
-    def test_health_check_response_format(self):
+    def test_health_check_response_format(self, test_client):
         """Test health check response format."""
-        from fastapi.testclient import TestClient
-        from app.main import app
-        
-        client = TestClient(app)
-        response = client.get("/health")
+        response = test_client.get("/health")
         data = response.json()
         
         assert "status" in data
@@ -40,33 +31,14 @@ class TestHealthCheck:
 class TestDatabaseConnectivity:
     """Test database connectivity."""
     
-    def test_database_engine_created(self):
-        """Test that database engine is created."""
-        from app.db.database import get_engine
-        
-        engine = get_engine()
-        assert engine is not None
-    
-    def test_database_connection_successful(self, test_engine):
-        """Test successful database connection."""
-        from sqlalchemy import text
-        
-        with test_engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            assert result.fetchone() is not None
-    
-    def test_all_models_created(self, test_engine):
-        """Test that all database models are created."""
-        from app.db.base import Base
-        
-        # All tables should be created
-        Base.metadata.create_all(bind=test_engine)
-        
-        # Verify tables exist
-        inspector = __import__('sqlalchemy').inspect(test_engine)
-        tables = inspector.get_table_names()
-        
-        assert len(tables) > 0
+    def test_isolated_database_available(self, test_session):
+        """Test the isolated MongoDB-compatible database has initialized collections."""
+        assert test_session is not None
+        assert {
+            "users", "customers", "transactions", "fraud_rules",
+            "fraud_assessments", "triggered_rules", "fraud_alerts",
+            "investigation_cases", "case_notes", "audit_logs",
+        }.issubset(set(test_session.list_collection_names()))
 
 
 class TestAuthenticationSystem:
@@ -106,14 +78,10 @@ class TestAuthenticationSystem:
 class TestAPIEndpoints:
     """Test API endpoints availability."""
     
-    def test_api_endpoints_exist(self):
+    def test_api_endpoints_exist(self, test_client):
         """Test that API endpoints are registered."""
-        from fastapi.testclient import TestClient
-        from app.main import app
-        
-        client = TestClient(app)
         # Test a known endpoint
-        response = client.get("/health")
+        response = test_client.get("/health")
         # Health endpoint should exist or be unavailable (not 404)
         assert response.status_code != 404
 
@@ -130,12 +98,11 @@ class TestDataModels:
             phone="1234567890",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
-        retrieved = test_session.query(Customer).filter_by(id=customer.id).first()
+        retrieved = test_session["customers"].find_one({"id": customer.id})
         assert retrieved is not None
-        assert retrieved.name == "Test Customer"
+        assert retrieved["name"] == "Test Customer"
     
     def test_transaction_model(self, test_session):
         """Test Transaction model."""
@@ -146,8 +113,7 @@ class TestDataModels:
             phone="1234567890",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         transaction = Transaction(
             transaction_id="TXN001",
@@ -159,12 +125,11 @@ class TestDataModels:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
-        retrieved = test_session.query(Transaction).filter_by(id=transaction.id).first()
+        retrieved = test_session["transactions"].find_one({"id": transaction.id})
         assert retrieved is not None
-        assert retrieved.amount == Decimal("1000.00")
+        assert retrieved["amount"].to_decimal() == Decimal("1000.00")
 
 
 class TestFraudDetectionFlow:
@@ -182,8 +147,7 @@ class TestFraudDetectionFlow:
             phone="1234567890",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         # Create transaction
         transaction = Transaction(
@@ -196,8 +160,7 @@ class TestFraudDetectionFlow:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Create fraud assessment
         assessment = FraudAssessment(
@@ -205,8 +168,7 @@ class TestFraudDetectionFlow:
             risk_score=Decimal("85.00"),
             risk_category="high",
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         # Create alert if score high
         if assessment.risk_score > Decimal("70"):
@@ -218,13 +180,12 @@ class TestFraudDetectionFlow:
                 alert_status="pending",
                 alert_reason="High risk score detected",
             )
-            test_session.add(alert)
-            test_session.commit()
+            insert_test_document(test_session, alert)
         
         # Verify workflow completed
-        alert = test_session.query(FraudAlert).filter_by(transaction_id=transaction.id).first()
+        alert = test_session["fraud_alerts"].find_one({"transaction_id": transaction.id})
         assert alert is not None
-        assert alert.alert_severity == "high"
+        assert alert["alert_severity"] == "high"
 
 
 class TestDashboardComponents:
@@ -303,7 +264,8 @@ class TestConfiguration:
         settings = get_settings()
         
         assert settings is not None
-        assert hasattr(settings, 'database_url')
+        assert hasattr(settings, 'mongodb_uri')
+        assert hasattr(settings, 'mongodb_database')
         assert hasattr(settings, 'environment')
     
     def test_environment_variables_accessible(self):
@@ -313,7 +275,7 @@ class TestConfiguration:
         settings = get_settings()
         
         # Should have at least some configuration
-        assert settings.database_url is not None or True  # Flexible check
+        assert isinstance(settings.mongodb_uri, str)
 
 
 class TestDependencies:
@@ -324,10 +286,10 @@ class TestDependencies:
         import fastapi
         assert fastapi is not None
     
-    def test_sqlalchemy_available(self):
-        """Test SQLAlchemy is available."""
-        import sqlalchemy
-        assert sqlalchemy is not None
+    def test_pymongo_available(self):
+        """Test the active MongoDB driver is available."""
+        import pymongo
+        assert pymongo is not None
     
     def test_pydantic_available(self):
         """Test Pydantic is available."""

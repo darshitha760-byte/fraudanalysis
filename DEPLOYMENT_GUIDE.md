@@ -1,4 +1,10 @@
 # Financial Risk Analysis and Hybrid Fraud Detection System
+
+> **Legacy deployment guide — do not execute as written.** Its MySQL-specific
+> commands, deployment-complete claims, and test credentials are historical.
+> The active app requires an already provisioned MongoDB service configured by
+> `MONGODB_URI` and `MONGODB_DATABASE`. No cloud resources or deployment were
+> provisioned or verified during this migration.
 ## Deployment Complete ✅
 
 ---

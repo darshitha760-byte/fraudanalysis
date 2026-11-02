@@ -11,6 +11,7 @@ from app.models.customer import Customer
 from app.models.fraud_alert import FraudAssessment, FraudAlert
 from app.models.case import InvestigationCase
 from app.models.audit_log import AuditLog
+from tests.conftest import insert_test_document
 
 
 class TestEndToEndTransactionWorkflow:
@@ -27,8 +28,7 @@ class TestEndToEndTransactionWorkflow:
             phone="9876543210",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         # Step 2: Create transaction
         transaction = Transaction(
@@ -41,8 +41,7 @@ class TestEndToEndTransactionWorkflow:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Step 3: Create fraud assessment
         assessment = FraudAssessment(
@@ -50,8 +49,7 @@ class TestEndToEndTransactionWorkflow:
             risk_score=Decimal("85.00"),
             risk_category="high",
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         # Step 4: Generate alert if risk score high
         if assessment.risk_score > Decimal("70"):
@@ -63,14 +61,15 @@ class TestEndToEndTransactionWorkflow:
                 alert_status="pending",
                 alert_reason="High risk score transaction",
             )
-            test_session.add(alert)
-            test_session.commit()
+            insert_test_document(test_session, alert)
         
         # Verify workflow
-        final_alert = test_session.query(FraudAlert).filter_by(transaction_id=transaction.id).first()
+        final_alert = test_session["fraud_alerts"].find_one(
+            {"transaction_id": transaction.id}
+        )
         assert final_alert is not None
-        assert final_alert.alert_severity == "high"
-        assert final_alert.alert_status == "pending"
+        assert final_alert["alert_severity"] == "high"
+        assert final_alert["alert_status"] == "pending"
     
     def test_transaction_to_case_workflow(self, test_session):
         """Test workflow including case creation."""
@@ -85,8 +84,7 @@ class TestEndToEndTransactionWorkflow:
             role=UserRole.ANALYST,
             is_active=True,
         )
-        test_session.add(user)
-        test_session.commit()
+        insert_test_document(test_session, user)
         
         # Setup: Create customer and transaction
         customer = Customer(
@@ -96,8 +94,7 @@ class TestEndToEndTransactionWorkflow:
             phone="5555555555",
             risk_profile="high",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         transaction = Transaction(
             transaction_id="TXN_CASE_001",
@@ -109,8 +106,7 @@ class TestEndToEndTransactionWorkflow:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Create assessment and alert
         assessment = FraudAssessment(
@@ -118,8 +114,7 @@ class TestEndToEndTransactionWorkflow:
             risk_score=Decimal("92.00"),
             risk_category="critical",
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert = FraudAlert(
             transaction_id=transaction.id,
@@ -129,8 +124,7 @@ class TestEndToEndTransactionWorkflow:
             alert_status="pending",
             alert_reason="Critical risk transaction requiring investigation",
         )
-        test_session.add(alert)
-        test_session.commit()
+        insert_test_document(test_session, alert)
         
         # Create investigation case
         case = InvestigationCase(
@@ -141,14 +135,15 @@ class TestEndToEndTransactionWorkflow:
             case_status="open",
             assigned_to=user.id,
         )
-        test_session.add(case)
-        test_session.commit()
+        insert_test_document(test_session, case)
         
         # Verify case created
-        final_case = test_session.query(InvestigationCase).filter_by(alert_id=alert.id).first()
+        final_case = test_session["investigation_cases"].find_one(
+            {"alert_id": alert.id}
+        )
         assert final_case is not None
-        assert final_case.case_status == "open"
-        assert final_case.assigned_to == user.id
+        assert final_case["case_status"] == "open"
+        assert final_case["assigned_to"] == user.id
 
 
 class TestCrossPhaseBoundaryIntegration:
@@ -164,8 +159,7 @@ class TestCrossPhaseBoundaryIntegration:
             phone="1111111111",
             risk_profile="low",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         # Phase 1 resource: Transaction
         transaction = Transaction(
@@ -178,8 +172,7 @@ class TestCrossPhaseBoundaryIntegration:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Phase 2 resource: Assessment
         assessment = FraudAssessment(
@@ -187,14 +180,15 @@ class TestCrossPhaseBoundaryIntegration:
             risk_score=Decimal("15.00"),
             risk_category="low",
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         # Verify cross-phase link
-        fetched_assessment = test_session.query(FraudAssessment).filter_by(transaction_id=transaction.id).first()
+        fetched_assessment = test_session["fraud_assessments"].find_one(
+            {"transaction_id": transaction.id}
+        )
         assert fetched_assessment is not None
-        assert fetched_assessment.transaction_id == transaction.id
-        assert fetched_assessment.risk_category == "low"
+        assert fetched_assessment["transaction_id"] == transaction.id
+        assert fetched_assessment["risk_category"] == "low"
 
 
 class TestAuditTrailIntegration:
@@ -210,8 +204,7 @@ class TestAuditTrailIntegration:
             phone="2222222222",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         transaction = Transaction(
             transaction_id="TXN_AUDIT_001",
@@ -223,8 +216,7 @@ class TestAuditTrailIntegration:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Create audit log entry
         audit_log = AuditLog(
@@ -238,14 +230,15 @@ class TestAuditTrailIntegration:
             changes_after={"amount": "5000.00", "status": "completed"},
             action_timestamp=datetime.now(),
         )
-        test_session.add(audit_log)
-        test_session.commit()
+        insert_test_document(test_session, audit_log)
         
         # Verify audit trail
-        audit_entry = test_session.query(AuditLog).filter_by(target_id=str(transaction.id)).first()
+        audit_entry = test_session["audit_logs"].find_one(
+            {"target_id": str(transaction.id)}
+        )
         assert audit_entry is not None
-        assert audit_entry.action == "create_transaction"
-        assert audit_entry.target_type == "transaction"
+        assert audit_entry["action"] == "create_transaction"
+        assert audit_entry["target_type"] == "transaction"
 
 
 class TestStateMachineTransitions:
@@ -262,8 +255,7 @@ class TestStateMachineTransitions:
             phone="3333333333",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         transaction = Transaction(
             transaction_id="TXN_STATE_001",
@@ -275,16 +267,14 @@ class TestStateMachineTransitions:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         assessment = FraudAssessment(
             transaction_id=transaction.id,
             risk_score=Decimal("75.00"),
             risk_category="high",
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         # Create alert in pending state
         alert = FraudAlert(
@@ -295,22 +285,23 @@ class TestStateMachineTransitions:
             alert_status="pending",
             alert_reason="High risk score",
         )
-        test_session.add(alert)
-        test_session.commit()
+        insert_test_document(test_session, alert)
         
         # Transition to under_review
-        alert.alert_status = "under_review"
-        test_session.commit()
-        
-        updated_alert = test_session.query(FraudAlert).filter_by(id=alert.id).first()
-        assert updated_alert.alert_status == "under_review"
+        test_session["fraud_alerts"].update_one(
+            {"id": alert.id}, {"$set": {"alert_status": "under_review"}}
+        )
+
+        updated_alert = test_session["fraud_alerts"].find_one({"id": alert.id})
+        assert updated_alert["alert_status"] == "under_review"
         
         # Transition to resolved
-        alert.alert_status = "resolved"
-        test_session.commit()
-        
-        resolved_alert = test_session.query(FraudAlert).filter_by(id=alert.id).first()
-        assert resolved_alert.alert_status == "resolved"
+        test_session["fraud_alerts"].update_one(
+            {"id": alert.id}, {"$set": {"alert_status": "resolved"}}
+        )
+
+        resolved_alert = test_session["fraud_alerts"].find_one({"id": alert.id})
+        assert resolved_alert["alert_status"] == "resolved"
 
 
 class TestDatabaseTransactionRollback:
@@ -326,8 +317,7 @@ class TestDatabaseTransactionRollback:
             phone="4444444444",
             risk_profile="low",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         try:
             # Create transaction
@@ -341,8 +331,7 @@ class TestDatabaseTransactionRollback:
                 transaction_date=datetime.now(),
                 status="completed",
             )
-            test_session.add(transaction)
-            test_session.commit()
+            insert_test_document(test_session, transaction)
             
             # Intentional error - this should trigger rollback in real scenario
             # For test purposes, we just verify transaction was created
@@ -353,5 +342,7 @@ class TestDatabaseTransactionRollback:
             raise
         
         # Verify transaction exists (successful commit)
-        result = test_session.query(Transaction).filter_by(transaction_id="TXN_ROLLBACK_001").first()
+        result = test_session["transactions"].find_one(
+            {"transaction_id": "TXN_ROLLBACK_001"}
+        )
         assert result is not None

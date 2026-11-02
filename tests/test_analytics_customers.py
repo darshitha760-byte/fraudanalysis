@@ -5,12 +5,12 @@ Tests for customer analytics functionality.
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from app.services.analytics_service import AnalyticsService
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -32,16 +32,13 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 class TestCustomerAnalytics:
     """Test suite for customer-level analytics."""
 
-    def test_get_customer_risk_profile(self, db: Session, sample_customer: Customer):
+    def test_get_customer_risk_profile(self, db, sample_customer: Customer):
         """Test customer risk profile retrieval."""
         # Create transactions for customer
         for i in range(5):
@@ -55,23 +52,22 @@ class TestCustomerAnalytics:
                 merchant_name="Test Merchant",
                 merchant_id="M001"
             )
-            db.add(txn)
-
-        db.commit()
+            insert_test_document(db, txn)
 
         # Create some alerts for the customer's transactions
-        txn_ids = db.query(Transaction.id).filter(
-            Transaction.customer_id == sample_customer.id
-        ).all()
+        txn_ids = list(db["transactions"].find(
+            {"customer_id": sample_customer.id}, {"id": 1}
+        ))
 
-        for txn_id in txn_ids[:2]:
+        for txn_doc in txn_ids[:2]:
             assessment, alert = create_test_fraud_assessment_and_alert(
-                db, txn_id[0], sample_customer.id,
+                db, txn_doc["id"], sample_customer.id,
                 risk_score=80
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            db["fraud_alerts"].update_one(
+                {"id": alert.id},
+                {"$set": {"alert_status": "resolved", "review_decision": "approved"}},
+            )
 
         # Get risk profile (pass customer.id which is the DB primary key)
         profile = AnalyticsService.get_customer_risk_profile(db, sample_customer.id)
@@ -84,14 +80,14 @@ class TestCustomerAnalytics:
         assert "average_transaction_amount" in profile
         assert "suspicious_patterns" in profile
 
-    def test_get_customer_risk_profile_nonexistent(self, db: Session):
+    def test_get_customer_risk_profile_nonexistent(self, db):
         """Test risk profile for nonexistent customer."""
         profile = AnalyticsService.get_customer_risk_profile(db, 99999)
 
         # Should return None or empty dict
         assert profile is None or profile.get("total_transactions", 0) == 0
 
-    def test_get_high_risk_customers(self, db: Session):
+    def test_get_high_risk_customers(self, db, mongo_server_only):
         """Test retrieval of high-risk customers."""
         # Create multiple customers with different fraud rates
         for cust_idx in range(5):
@@ -105,20 +101,18 @@ class TestCustomerAnalytics:
                 city="New York",
                 risk_profile="high"
             )
-            db.add(customer)
-
-        db.commit()
+            insert_test_document(db, customer)
 
         # Create transactions and alerts for each customer
-        customers = db.query(Customer).filter(
-            Customer.customer_id.like("CUST_HIGHRISK_%")
-        ).all()
+        customers = list(db["customers"].find(
+            {"customer_id": {"$regex": "^CUST_HIGHRISK_"}}
+        ))
 
         for idx, customer in enumerate(customers):
             # Create varying number of transactions
             for i in range(2 + idx):
                 txn = Transaction(
-                    customer_id=customer.id,
+                    customer_id=customer["id"],
                     transaction_id=f"TXN_RISK_{idx}_{i}",
                     amount=Decimal("500.00"),
                     transaction_date=datetime.utcnow(),
@@ -127,23 +121,22 @@ class TestCustomerAnalytics:
                     merchant_name="Test",
                     merchant_id="M001"
                 )
-                db.add(txn)
-
-            db.commit()
+                insert_test_document(db, txn)
 
             # Create alerts based on index (first customer has fewer)
-            txn_ids = db.query(Transaction.id).filter(
-                Transaction.customer_id == customer.id
-            ).all()
+            txn_ids = list(db["transactions"].find(
+                {"customer_id": customer["id"]}, {"id": 1}
+            ))
 
-            for i, txn_id in enumerate(txn_ids[:max(1, idx)]):
+            for i, txn_doc in enumerate(txn_ids[:max(1, idx)]):
                 assessment, alert = create_test_fraud_assessment_and_alert(
-                    db, txn_id[0], customer.id,
+                    db, txn_doc["id"], customer["id"],
                     risk_score=70 + idx * 5
                 )
-                alert.alert_status = "resolved"
-                alert.review_decision = "approved"
-                db.commit()
+                db["fraud_alerts"].update_one(
+                    {"id": alert.id},
+                    {"$set": {"alert_status": "resolved", "review_decision": "approved"}},
+                )
 
         # Get high risk customers
         high_risk = AnalyticsService.get_high_risk_customers(db, limit=5)
@@ -151,7 +144,7 @@ class TestCustomerAnalytics:
         assert len(high_risk) >= 0
         assert len(high_risk) <= 5
 
-    def test_customer_fraud_rate_calculation(self, db: Session, sample_customer: Customer):
+    def test_customer_fraud_rate_calculation(self, db, sample_customer: Customer):
         """Test customer fraud rate calculation."""
         # Create transactions
         for i in range(10):
@@ -165,34 +158,34 @@ class TestCustomerAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-
-        db.commit()
+            insert_test_document(db, txn)
 
         # Get transaction IDs
-        txn_ids = db.query(Transaction.id).filter(
-            Transaction.customer_id == sample_customer.id
-        ).all()
+        txn_ids = list(db["transactions"].find(
+            {"customer_id": sample_customer.id}, {"id": 1}
+        ))
 
         # Create alerts for 7 transactions (fraud confirmed)
-        for txn_id in txn_ids[:7]:
+        for txn_doc in txn_ids[:7]:
             assessment, alert = create_test_fraud_assessment_and_alert(
-                db, txn_id[0], sample_customer.id,
+                db, txn_doc["id"], sample_customer.id,
                 risk_score=80
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            db["fraud_alerts"].update_one(
+                {"id": alert.id},
+                {"$set": {"alert_status": "resolved", "review_decision": "approved"}},
+            )
 
         # Create alerts for 3 transactions (false positive)
-        for txn_id in txn_ids[7:]:
+        for txn_doc in txn_ids[7:]:
             assessment, alert = create_test_fraud_assessment_and_alert(
-                db, txn_id[0], sample_customer.id,
+                db, txn_doc["id"], sample_customer.id,
                 risk_score=40
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "rejected"
-            db.commit()
+            db["fraud_alerts"].update_one(
+                {"id": alert.id},
+                {"$set": {"alert_status": "resolved", "review_decision": "rejected"}},
+            )
 
         # Get customer profile
         profile = AnalyticsService.get_customer_risk_profile(db, sample_customer.id)

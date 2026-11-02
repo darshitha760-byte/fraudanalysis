@@ -6,7 +6,7 @@ Creates realistic fraud and legitimate transaction patterns.
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 import logging
 import random
 import argparse
@@ -233,7 +233,7 @@ class SyntheticDataGenerator:
     @staticmethod
     def insert_into_database(
         df: pd.DataFrame,
-        session: Session,
+        session: Database,
         batch_size: int = 1000
     ) -> int:
         """
@@ -249,6 +249,7 @@ class SyntheticDataGenerator:
         """
         from app.models import Customer, FraudAssessment, Transaction
         from app.services.fraud_engine import FraudEngine
+        from app.db.database import from_bson, insert_document
         
         logger.info(f"Inserting {len(df)} transactions into database...")
         
@@ -257,10 +258,10 @@ class SyntheticDataGenerator:
         customer_id_map = {}
         for cid in unique_customers:
             external_customer_id = f"SYNTH-CUST-{int(cid):06d}"
-            customer = session.query(Customer).filter(
-                Customer.customer_id == external_customer_id
-            ).first()
-            if not customer:
+            customer_doc = session["customers"].find_one(
+                {"customer_id": external_customer_id}
+            )
+            if not customer_doc:
                 customer = Customer(
                     customer_id=external_customer_id,
                     name=f"Customer_{cid}",
@@ -269,11 +270,12 @@ class SyntheticDataGenerator:
                     country="US",
                     city=f"City_{int(cid) % 50}",
                 )
-                session.add(customer)
-                session.flush()
-            customer_id_map[int(cid)] = customer.id
-        
-        session.commit()
+                customer_doc = insert_document(
+                    session,
+                    "customers",
+                    customer.model_dump(exclude={"id", "created_at", "updated_at"}),
+                )
+            customer_id_map[int(cid)] = int(customer_doc["id"])
         
         # Insert transactions in batches
         for i in range(0, len(df), batch_size):
@@ -299,23 +301,28 @@ class SyntheticDataGenerator:
                     is_synthetic=row.get('is_synthetic', True),
                     fraud_label=bool(row['fraud_label']),
                 )
-                session.add(transaction)
-                session.flush()
-
-                risk_score, risk_level, triggered_rules = (
-                    FraudEngine.evaluate_transaction(session, transaction)
+                inserted = insert_document(
+                    session,
+                    "transactions",
+                    transaction.model_dump(exclude={"id", "created_at", "updated_at"}),
                 )
-                session.add(
-                    FraudAssessment(
-                        transaction_id=transaction.id,
+                stored_transaction = Transaction.model_validate(from_bson(inserted))
+                risk_score, risk_level, triggered_rules = FraudEngine.evaluate_transaction(
+                    session, stored_transaction
+                )
+                assessment = FraudAssessment(
+                        transaction_id=stored_transaction.id,
                         risk_score=risk_score,
                         risk_category=risk_level,
                         rules_triggered_count=len(triggered_rules),
                         explanation="Scored by the configured fraud rule engine.",
                     )
+                insert_document(
+                    session,
+                    "fraud_assessments",
+                    assessment.model_dump(exclude={"id", "created_at", "updated_at"}),
                 )
             
-            session.commit()
             logger.info(f"Inserted {min(i + batch_size, len(df))}/{len(df)} transactions")
         
         logger.info(f"Successfully inserted {len(df)} transactions")
@@ -331,9 +338,9 @@ def main():
     parser.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
 
-    from app.db.database import get_session_factory
+    from app.db.database import close_db, get_database
 
-    session = get_session_factory()()
+    session = get_database()
     
     try:
         # Generate synthetic data
@@ -350,7 +357,7 @@ def main():
         logger.info(f"Synthetic data generation complete. {inserted} transactions inserted.")
     
     finally:
-        session.close()
+        close_db()
 
 
 if __name__ == '__main__':

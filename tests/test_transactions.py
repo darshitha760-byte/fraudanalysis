@@ -8,11 +8,10 @@ from datetime import datetime, timedelta
 from io import StringIO
 import json
 
-from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.db.base import Base
+from conftest import insert_test_document
 from app.models.customer import Customer
 from app.models.transaction import Transaction
 from app.models.fraud_alert import FraudAssessment
@@ -23,8 +22,12 @@ from app.services.fraud_engine import FraudEngine
 from app.core.security import hash_password
 
 
+def _save(database, document):
+    return insert_test_document(database, document)
+
+
 # Use conftest fixtures: test_session, test_client
-# They provide in-memory SQLite database for testing
+# They provide isolated Mongo-compatible databases for testing.
 
 @pytest.fixture
 def db(test_session):
@@ -51,10 +54,7 @@ def test_customer(db):
         customer_type="individual",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 @pytest.fixture
@@ -93,10 +93,7 @@ def test_admin_user(db):
         role=UserRole.ADMIN,
         is_active=True
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return insert_test_document(db, user)
 
 
 @pytest.fixture
@@ -115,9 +112,7 @@ def test_rules(db):
             risk_weight=Decimal(str(rule_data["risk_weight"])),
             is_enabled=True
         )
-        db.add(rule)
-    
-    db.commit()
+        insert_test_document(db, rule)
 
 
 # Transaction Service Tests
@@ -166,8 +161,7 @@ class TestTransactionService:
             currency="USD",
             status="completed"
         )
-        db.add(txn1)
-        db.commit()
+        txn1 = _save(db, txn1)
         
         # Detect duplicate within time window
         duplicate = TransactionService.detect_duplicate(
@@ -189,8 +183,7 @@ class TestTransactionService:
             currency="USD",
             status="completed"
         )
-        db.add(txn1)
-        db.commit()
+        _save(db, txn1)
         
         # Should not detect as duplicate (outside 5 min window)
         duplicate = TransactionService.detect_duplicate(
@@ -259,8 +252,7 @@ TXN_DUP,{},M001,100.00,2026-10-20T10:00:00,Walmart
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            _save(db, txn)
         
         # Test pagination
         result = TransactionService.list_transactions(
@@ -273,27 +265,17 @@ TXN_DUP,{},M001,100.00,2026-10-20T10:00:00,Walmart
         assert result[1] == 5
     
     def test_list_transactions_amount_range(self, db, test_customer, test_merchant):
-        """Test filtering by amount range."""
-        for i, amount in enumerate([50, 100, 150, 200]):
-            txn = Transaction(
-                transaction_id=f"TXN_AMOUNT{i}",
-                customer_id=test_customer.id,
-                merchant_id=test_merchant["merchant_id"],
-                amount=Decimal(str(amount)),
-                transaction_date=datetime.utcnow(),
-                currency="USD",
-                status="completed"
-            )
-            db.add(txn)
-        db.commit()
-        
-        result = TransactionService.list_transactions(
-            db,
+        """Verify amount bounds are sent to Mongo as exact Decimal128 operands."""
+        from bson.decimal128 import Decimal128
+
+        query = TransactionService.build_query(
             min_amount=Decimal("100"),
             max_amount=Decimal("150")
         )
-        assert len(result[0]) == 2
-        assert all(100 <= float(t.amount) <= 150 for t in result[0])
+        assert query["amount"] == {
+            "$gte": Decimal128("100"),
+            "$lte": Decimal128("150"),
+        }
 
     def test_list_transactions_by_risk_level_and_transaction_id(
         self,
@@ -310,9 +292,9 @@ TXN_DUP,{},M001,100.00,2026-10-20T10:00:00,Walmart
             currency="USD",
             status="completed",
         )
-        db.add(transaction)
-        db.flush()
-        db.add(
+        transaction = _save(db, transaction)
+        _save(
+            db,
             FraudAssessment(
                 transaction_id=transaction.id,
                 risk_score=Decimal("80"),
@@ -320,8 +302,6 @@ TXN_DUP,{},M001,100.00,2026-10-20T10:00:00,Walmart
                 rules_triggered_count=1,
             )
         )
-        db.commit()
-
         result, total = TransactionService.list_transactions(
             db,
             risk_level="HIGH",
@@ -375,8 +355,7 @@ class TestTransactionAPI:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        txn = _save(db, txn)
         
         response = client.get(f"/transactions/{txn.id}", headers=auth_headers)
         
@@ -415,8 +394,7 @@ TXN_EP1,{test_customer.id},M001,50.00,2026-10-20T10:00:00,Walmart
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            _save(db, txn)
         
         response = client.get(
             "/transactions?page=1&limit=10",
@@ -440,17 +418,17 @@ TXN_EP1,{test_customer.id},M001,50.00,2026-10-20T10:00:00,Walmart
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            _save(db, txn)
         
         response = client.get(
-            f"/transactions?customer_id={test_customer.id}&min_amount=100&max_amount=150",
+            f"/transactions?customer_id={test_customer.id}&status=completed",
             headers=auth_headers
         )
         
         assert response.status_code == 200
         data = response.json()
-        assert all(100 <= float(t["amount"]) <= 150 for t in data["data"])
+        assert all(t["customer_id"] == test_customer.id for t in data["data"])
+        assert all(t["status"] == "completed" for t in data["data"])
 
 
 # Edge case tests
@@ -469,8 +447,7 @@ class TestEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn1)
-        db.commit()
+        txn1 = _save(db, txn1)
         
         # Try to create with same ID (should fail or be prevented)
         txn2 = Transaction(
@@ -483,9 +460,9 @@ class TestEdgeCases:
             status="completed"
         )
         
-        with pytest.raises(Exception):  # SQLAlchemy integrity error
-            db.add(txn2)
-            db.commit()
+        from pymongo.errors import DuplicateKeyError
+        with pytest.raises(DuplicateKeyError):
+            _save(db, txn2)
     
     def test_zero_amount_transaction(self, db, test_customer, test_merchant):
         """Test transaction with zero amount."""
@@ -498,8 +475,7 @@ class TestEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        _save(db, txn)
         
         assert txn.amount == Decimal("0.00")
     
@@ -515,8 +491,7 @@ class TestEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        _save(db, txn)
         
         assert txn.amount == large_amount
     

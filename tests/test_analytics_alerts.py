@@ -5,12 +5,12 @@ Tests for alert analytics functionality.
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from app.services.analytics_service import AnalyticsService
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert, FraudAssessment
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -32,16 +32,20 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
+
+
+def _update_alert(db, alert, status, decision=None):
+    fields = {"alert_status": status}
+    if decision is not None:
+        fields["review_decision"] = decision
+    db["fraud_alerts"].update_one({"id": alert.id}, {"$set": fields})
 
 
 class TestAlertAnalytics:
     """Test suite for alert-level analytics."""
 
-    def test_get_alert_statistics_basic(self, db: Session, sample_customer: Customer):
+    def test_get_alert_statistics_basic(self, db, sample_customer: Customer):
         """Test basic alert statistics retrieval."""
         # Create sample alerts in different statuses using unique transactions
         # 3 pending alerts
@@ -56,15 +60,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=50 + i * 10
             )
-            alert.alert_status = "pending"
-            db.commit()
+            _update_alert(db, alert, "pending")
 
         # 2 approved (resolved) alerts
         for i in range(2):
@@ -78,16 +80,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=75
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            _update_alert(db, alert, "resolved", "approved")
 
         # 1 rejected alert
         txn = Transaction(
@@ -100,16 +99,13 @@ class TestAlertAnalytics:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.flush()
+        insert_test_document(db, txn)
         
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, txn.id, sample_customer.id,
             risk_score=25
         )
-        alert.alert_status = "resolved"
-        alert.review_decision = "rejected"
-        db.commit()
+        _update_alert(db, alert, "resolved", "rejected")
 
         # Get statistics
         stats = AnalyticsService.get_alert_statistics(db, days=30)
@@ -120,7 +116,7 @@ class TestAlertAnalytics:
         assert "approval_rate" in stats
         assert "rejection_rate" in stats
 
-    def test_get_fraud_confirmed_rate(self, db: Session, sample_customer: Customer):
+    def test_get_fraud_confirmed_rate(self, db, sample_customer: Customer):
         """Test fraud confirmed rate calculation."""
         # Create alerts: 4 approved (confirmed fraud), 6 rejected (false positives)
         # All use unique transactions
@@ -135,16 +131,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=80
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            _update_alert(db, alert, "resolved", "approved")
 
         for i in range(6):
             txn = Transaction(
@@ -157,16 +150,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=30
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "rejected"
-            db.commit()
+            _update_alert(db, alert, "resolved", "rejected")
 
         # Get fraud confirmed rate
         confirmed_rate = AnalyticsService.get_fraud_confirmed_rate(db)
@@ -174,7 +164,7 @@ class TestAlertAnalytics:
         # Should be 4/10 = 40%
         assert 0 <= confirmed_rate <= 100
 
-    def test_get_false_positive_rate(self, db: Session, sample_customer: Customer):
+    def test_get_false_positive_rate(self, db, sample_customer: Customer):
         """Test false positive rate calculation."""
         # Create alerts: 3 approved (fraud), 7 rejected (false positives)
         for i in range(3):
@@ -188,16 +178,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=80
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            _update_alert(db, alert, "resolved", "approved")
 
         for i in range(7):
             txn = Transaction(
@@ -210,16 +197,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=30
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "rejected"
-            db.commit()
+            _update_alert(db, alert, "resolved", "rejected")
 
         # Get false positive rate
         fp_rate = AnalyticsService.get_false_positive_rate(db)
@@ -227,7 +211,7 @@ class TestAlertAnalytics:
         # Should be 7/10 = 70%
         assert 0 <= fp_rate <= 100
 
-    def test_alert_statistics_time_filtering(self, db: Session, sample_customer: Customer):
+    def test_alert_statistics_time_filtering(self, db, sample_customer: Customer):
         """Test alert statistics with time filtering."""
         # Create old alert (outside 7-day window)
         old_txn = Transaction(
@@ -240,15 +224,13 @@ class TestAlertAnalytics:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(old_txn)
-        db.flush()
+        insert_test_document(db, old_txn)
         
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, old_txn.id, sample_customer.id,
             risk_score=50
         )
-        alert.alert_status = "pending"
-        db.commit()
+        _update_alert(db, alert, "pending")
 
         # Create recent alert
         recent_txn = Transaction(
@@ -261,15 +243,13 @@ class TestAlertAnalytics:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(recent_txn)
-        db.flush()
+        insert_test_document(db, recent_txn)
         
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, recent_txn.id, sample_customer.id,
             risk_score=50
         )
-        alert.alert_status = "pending"
-        db.commit()
+        _update_alert(db, alert, "pending")
 
         # Get statistics for 7 days
         stats = AnalyticsService.get_alert_statistics(db, days=7)
@@ -277,7 +257,7 @@ class TestAlertAnalytics:
         # Should only count recent alert
         assert stats["total_alerts"] >= 1
 
-    def test_approval_rate_calculation(self, db: Session, sample_customer: Customer):
+    def test_approval_rate_calculation(self, db, sample_customer: Customer):
         """Test approval rate calculation."""
         # Create 5 approved and 5 rejected alerts
         for i in range(5):
@@ -291,16 +271,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=75
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "approved"
-            db.commit()
+            _update_alert(db, alert, "resolved", "approved")
 
         for i in range(5):
             txn = Transaction(
@@ -313,16 +290,13 @@ class TestAlertAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             
             assessment, alert = create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=30
             )
-            alert.alert_status = "resolved"
-            alert.review_decision = "rejected"
-            db.commit()
+            _update_alert(db, alert, "resolved", "rejected")
 
         # Get statistics
         stats = AnalyticsService.get_alert_statistics(db, days=30)
@@ -330,7 +304,7 @@ class TestAlertAnalytics:
         # Should have 50% approval rate
         assert stats["approval_rate"] == 50.0
 
-    def test_alert_statistics_empty(self, db: Session):
+    def test_alert_statistics_empty(self, db):
         """Test alert statistics with no data."""
         stats = AnalyticsService.get_alert_statistics(db, days=30)
 

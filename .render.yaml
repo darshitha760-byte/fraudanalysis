@@ -1,47 +1,40 @@
 services:
   - type: web
     name: fraud-detection-api
-    env: docker
+    runtime: docker
     region: ohio
     plan: standard
     
     # Build configuration
-    dockerfile: Dockerfile.render
+    dockerfilePath: ./Dockerfile.render
     dockerContext: ./
     
-    # Healthcheck
-    healthCheck:
-      path: /health
-      interval: 30
-      timeout: 10
-      startPeriod: 20
-      retries: 3
+    # Readiness verifies MongoDB connectivity before Render routes traffic.
+    healthCheckPath: /health/ready
     
     # Environment variables (override in dashboard)
     envVars:
-      - key: DATABASE_URL
-        scope: run
-      - key: REDIS_URL
-        scope: run
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: fraud_detection_db
+      # Set to the exact Vercel production origin after that hostname exists.
+      - key: CORS_ORIGINS
+        sync: false
       - key: SECRET_KEY
-        scope: run
+        sync: false
+      - key: MODEL_STORAGE_BACKEND
+        value: atlas
+      - key: MODEL_ARTIFACT_SIGNING_KEY
+        sync: false
       - key: ENVIRONMENT
         value: production
-        scope: run
       - key: DEBUG
         value: "false"
-        scope: run
-      - key: API_PORT
-        value: "8000"
-        scope: run
       - key: PYTHONUNBUFFERED
         value: "1"
-        scope: run
       - key: PYTHONDONTWRITEBYTECODE
         value: "1"
-        scope: run
     
     # Auto-deploy configuration
-    autoDeploy: true
-    preDeployCommand: |
-      python -m alembic upgrade head
+    autoDeployTrigger: commit

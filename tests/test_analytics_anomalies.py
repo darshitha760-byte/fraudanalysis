@@ -5,12 +5,12 @@ Tests for anomaly detection functionality.
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from app.services.analytics_service import AnalyticsService
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -32,16 +32,15 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 class TestAnomalyDetection:
     """Test suite for anomaly detection."""
 
-    def test_detect_volume_spike_anomaly(self, db: Session, sample_customer: Customer):
+    def test_detect_volume_spike_anomaly(
+        self, db, sample_customer: Customer, mongo_server_only
+    ):
         """Test detection of transaction volume spikes."""
         # Create baseline: 2 transactions on day 1
         base_date = datetime.utcnow() - timedelta(days=5)
@@ -56,7 +55,7 @@ class TestAnomalyDetection:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
+            insert_test_document(db, txn)
 
         # Create spike: 10 transactions on day 2 (5x normal)
         spike_date = datetime.utcnow()
@@ -71,9 +70,8 @@ class TestAnomalyDetection:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
+            insert_test_document(db, txn)
 
-        db.commit()
 
         # Detect anomalies
         anomalies = AnalyticsService.detect_transaction_anomalies(db)
@@ -81,7 +79,9 @@ class TestAnomalyDetection:
         # Should detect volume spike
         assert len(anomalies) >= 0
 
-    def test_detect_velocity_anomaly(self, db: Session, sample_customer: Customer):
+    def test_detect_velocity_anomaly(
+        self, db, sample_customer: Customer, mongo_server_only
+    ):
         """Test detection of rapid transaction velocity."""
         # Create rapid transactions (multiple in short time)
         now = datetime.utcnow()
@@ -96,9 +96,8 @@ class TestAnomalyDetection:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
+            insert_test_document(db, txn)
 
-        db.commit()
 
         # Detect anomalies
         anomalies = AnalyticsService.detect_transaction_anomalies(db)
@@ -106,7 +105,9 @@ class TestAnomalyDetection:
         # Should detect velocity anomaly
         assert len(anomalies) >= 0
 
-    def test_detect_large_amount_anomaly(self, db: Session, sample_customer: Customer):
+    def test_detect_large_amount_anomaly(
+        self, db, sample_customer: Customer, mongo_server_only
+    ):
         """Test detection of unusually large transactions."""
         # Create baseline small transactions
         for i in range(5):
@@ -120,7 +121,7 @@ class TestAnomalyDetection:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
+            insert_test_document(db, txn)
 
         # Create large anomalous transaction
         large_txn = Transaction(
@@ -133,8 +134,7 @@ class TestAnomalyDetection:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(large_txn)
-        db.commit()
+        insert_test_document(db, large_txn)
 
         # Detect anomalies
         anomalies = AnalyticsService.detect_transaction_anomalies(db)
@@ -142,7 +142,7 @@ class TestAnomalyDetection:
         # Should detect large amount anomaly
         assert len(anomalies) >= 0
 
-    def test_score_transaction_anomaly(self, db: Session, sample_customer: Customer):
+    def test_score_transaction_anomaly(self, db, sample_customer: Customer):
         """Test anomaly scoring for individual transaction."""
         # Create a normal transaction
         txn = Transaction(
@@ -155,9 +155,7 @@ class TestAnomalyDetection:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.commit()
-        db.refresh(txn)
+        insert_test_document(db, txn)
 
         # Score the transaction (pass session and transaction ID)
         score = AnalyticsService.score_transaction_anomaly(db, txn.id)
@@ -166,7 +164,7 @@ class TestAnomalyDetection:
         assert 0 <= score <= 100
         assert isinstance(score, (int, float))
 
-    def test_anomaly_detection_empty(self, db: Session):
+    def test_anomaly_detection_empty(self, db):
         """Test anomaly detection with no transactions."""
         anomalies = AnalyticsService.detect_transaction_anomalies(db)
 

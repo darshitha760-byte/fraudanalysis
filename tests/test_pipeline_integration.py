@@ -5,13 +5,13 @@ Tests for end-to-end pipeline integration.
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from app.services.pipeline_service import PipelineService
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
 from app.models.case import InvestigationCase
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -33,17 +33,15 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestPipelineIntegration:
     """Test suite for end-to-end pipeline orchestration."""
 
     def test_process_transaction_pipeline_basic(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test basic transaction processing through full pipeline."""
         # Create a transaction with correct fields
@@ -57,8 +55,7 @@ class TestPipelineIntegration:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Process through pipeline
         result = PipelineService.process_transaction_pipeline(db, txn.id)
@@ -71,7 +68,7 @@ class TestPipelineIntegration:
         assert result["success"] is True
 
     def test_process_transaction_pipeline_creates_alert(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test that pipeline creates alert for high-risk transaction."""
         # Create a high-risk transaction (large amount, unusual pattern)
@@ -85,11 +82,10 @@ class TestPipelineIntegration:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Get baseline alert count
-        baseline_alerts = db.query(FraudAlert).count()
+        baseline_alerts = db["fraud_alerts"].count_documents({})
 
         # Process through pipeline
         result = PipelineService.process_transaction_pipeline(db, txn.id)
@@ -98,10 +94,10 @@ class TestPipelineIntegration:
         assert result["success"] is True
         
         # Alert count should be same or higher (depends on if risk triggered)
-        new_alerts = db.query(FraudAlert).count()
+        new_alerts = db["fraud_alerts"].count_documents({})
         assert new_alerts >= baseline_alerts
 
-    def test_process_transaction_pipeline_nonexistent(self, db: Session):
+    def test_process_transaction_pipeline_nonexistent(self, db):
         """Test pipeline with nonexistent transaction."""
         # Try to process nonexistent transaction
         result = PipelineService.process_transaction_pipeline(db, 99999)
@@ -112,7 +108,7 @@ class TestPipelineIntegration:
         assert result["success"] is False
 
     def test_batch_process_transactions_multiple(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test batch processing of multiple transactions."""
         # Create 5 transactions
@@ -128,11 +124,8 @@ class TestPipelineIntegration:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             txn_ids.append(txn.id)
-
-        db.commit()
 
         # Process batch
         result = PipelineService.batch_process_transactions(db, txn_ids)
@@ -145,7 +138,7 @@ class TestPipelineIntegration:
         assert result["total_transactions"] == len(txn_ids)
         assert result["successful"] + result["failed"] == result["total_transactions"]
 
-    def test_batch_process_transactions_empty(self, db: Session):
+    def test_batch_process_transactions_empty(    self, db):
         """Test batch processing with empty list."""
         result = PipelineService.batch_process_transactions(db, [])
 
@@ -154,7 +147,7 @@ class TestPipelineIntegration:
         assert result["total_transactions"] == 0
 
     def test_batch_process_transactions_mixed_valid_invalid(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test batch with mix of valid and invalid transaction IDs."""
         # Create one valid transaction
@@ -168,8 +161,7 @@ class TestPipelineIntegration:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Create batch with valid and invalid IDs
         batch_ids = [txn.id, 99999, 99998]
@@ -182,7 +174,7 @@ class TestPipelineIntegration:
         assert result["successful"] >= 1
 
     def test_reprocess_alert_basic(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test reprocessing an alert with latest rules."""
         # Create transaction and alert using helper
@@ -196,14 +188,14 @@ class TestPipelineIntegration:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.flush()
+        insert_test_document(db, txn)
         
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, txn.id, sample_customer.id, risk_score=75
         )
-        alert.alert_status = "pending"
-        db.commit()
+        db["fraud_alerts"].update_one(
+            {"id": alert.id}, {"$set": {"alert_status": "pending"}}
+        )
 
         # Reprocess alert
         result = PipelineService.reprocess_alert(db, alert.id)
@@ -214,7 +206,7 @@ class TestPipelineIntegration:
         assert result["alert_id"] == alert.id
 
     def test_reprocess_alert_updates_assessment(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test that reprocessing updates the assessment."""
         # Create transaction and alert using helper
@@ -228,14 +220,14 @@ class TestPipelineIntegration:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(txn)
-        db.flush()
+        insert_test_document(db, txn)
 
         assessment, alert = create_test_fraud_assessment_and_alert(
             db, txn.id, sample_customer.id, risk_score=50
         )
-        alert.alert_status = "needs_review"
-        db.commit()
+        db["fraud_alerts"].update_one(
+            {"id": alert.id}, {"$set": {"alert_status": "needs_review"}}
+        )
 
         # Reprocess alert
         result = PipelineService.reprocess_alert(db, alert.id)
@@ -244,7 +236,7 @@ class TestPipelineIntegration:
         assert result["success"] is True
 
     def test_pipeline_full_flow_low_risk(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test full pipeline flow for low-risk transaction."""
         # Create low-risk transaction
@@ -258,8 +250,7 @@ class TestPipelineIntegration:
             merchant_name="Grocery Store",
             merchant_id="GROCERY_001"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Process through pipeline
         result = PipelineService.process_transaction_pipeline(db, txn.id)
@@ -269,7 +260,7 @@ class TestPipelineIntegration:
         assert result["transaction_id"] == txn.id
 
     def test_pipeline_full_flow_high_risk(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test full pipeline flow for high-risk transaction."""
         # Create high-risk transaction
@@ -283,8 +274,7 @@ class TestPipelineIntegration:
             merchant_name="Unknown",
             merchant_id="UNKNOWN_999"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
 
         # Process through pipeline
         result = PipelineService.process_transaction_pipeline(db, txn.id)

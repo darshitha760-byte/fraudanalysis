@@ -172,7 +172,7 @@ sleep 15
 # Step 6: Verify services
 print_header "Step 6: Verifying Services"
 
-SERVICES=("mysql" "redis" "api" "dashboard")
+SERVICES=("redis" "api" "frontend" "dashboard")
 
 for service in "${SERVICES[@]}"; do
     STATUS=$(docker-compose ps $service 2>/dev/null | grep -c "Up" || echo "0")
@@ -187,13 +187,13 @@ done
 # Step 7: Initialize database
 print_header "Step 7: Database Initialization"
 
-print_info "Running database migrations..."
+print_info "Checking MongoDB connectivity and initializing indexes..."
 docker-compose exec -T api python run_migrations.py 2>&1 | tail -5
 
 if [ $? -eq 0 ]; then
-    print_success "Database migrations completed"
+    print_success "MongoDB connectivity verified and indexes initialized"
 else
-    print_warning "Database migrations may have issues"
+    print_warning "MongoDB index initialization may have issues"
 fi
 
 print_info "Seeding sample data..."

@@ -1,4 +1,9 @@
-# Quick Start Deployment Guide
+# Legacy Quick Start Deployment Guide — Superseded
+
+> **Do not execute the historical instructions below.** Active runtime
+> persistence uses an already provisioned MongoDB service configured by
+> `MONGODB_URI` and `MONGODB_DATABASE`. PostgreSQL/MySQL/Alembic setup, SQL
+> backups, and restore steps are obsolete. No transfer or deployment occurred.
 
 Get the Fraud Detection Dashboard system running in 5 minutes (development) or 15 minutes (production).
 

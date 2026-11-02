@@ -12,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.api import models
 from app.core.security import get_current_user
+from app.db.database import get_db
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
 from components.auth_handler import AuthHandler
@@ -60,6 +61,7 @@ def test_invalid_metadata_surfaces_failure(tmp_path, monkeypatch):
 def test_routes_require_authentication_and_return_saved_metrics(saved_model):
     app = FastAPI()
     app.include_router(models.router)
+    app.dependency_overrides[get_db] = lambda: None
     client = TestClient(app)
     assert client.get("/api/models").status_code == 401
     assert client.get(f"/api/models/{saved_model}/metrics").status_code == 401

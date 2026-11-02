@@ -9,7 +9,7 @@ import pandas as pd
 import logging
 from datetime import datetime
 from pathlib import Path
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from app.ml.preprocessing import DataPreprocessor
 from app.ml.train import ModelTrainer
@@ -34,7 +34,7 @@ class MLService:
     
     def train_models(
         self,
-        session: Session,
+        session: Database,
         use_fraud_labeled_only: bool = True,
         train_logistic_regression: bool = True,
         train_random_forest: bool = True,
@@ -43,6 +43,8 @@ class MLService:
         data_source: str = "database",
         evaluation_only: bool = False,
         generate_plots: bool = True,
+        artifact_database=None,
+        artifact_signing_key: str = "",
     ) -> Dict[str, Any]:
         """
         Train one or more ML models.
@@ -125,7 +127,10 @@ class MLService:
                 
                 # Save
                 lr_metadata.update(provenance, validation_metrics=lr_metrics, feature_names=feature_cols)
-                model_path = ModelTrainer.save_model(lr_model, lr_metadata, 'logistic_regression', scaler=scaler)
+                model_path = ModelTrainer.save_model(
+                    lr_model, lr_metadata, 'logistic_regression', scaler=scaler,
+                    artifact_database=artifact_database, signing_key=artifact_signing_key,
+                )
                 
                 results['models']['logistic_regression'] = {
                     'path': model_path,
@@ -145,7 +150,10 @@ class MLService:
                 
                 # Save
                 rf_metadata.update(provenance, validation_metrics=rf_metrics, feature_names=feature_cols)
-                model_path = ModelTrainer.save_model(rf_model, rf_metadata, 'random_forest', scaler=scaler)
+                model_path = ModelTrainer.save_model(
+                    rf_model, rf_metadata, 'random_forest', scaler=scaler,
+                    artifact_database=artifact_database, signing_key=artifact_signing_key,
+                )
                 
                 results['models']['random_forest'] = {
                     'path': model_path,
@@ -174,7 +182,10 @@ class MLService:
                 
                 # Save
                 iso_metadata.update(provenance, validation_metrics=iso_metrics, feature_names=feature_cols)
-                model_path = ModelTrainer.save_model(iso_model, iso_metadata, 'isolation_forest', scaler=scaler)
+                model_path = ModelTrainer.save_model(
+                    iso_model, iso_metadata, 'isolation_forest', scaler=scaler,
+                    artifact_database=artifact_database, signing_key=artifact_signing_key,
+                )
                 
                 results['models']['isolation_forest'] = {
                     'path': model_path,
@@ -216,7 +227,9 @@ class MLService:
                 'error_type': 'invalid_data' if isinstance(e, ValueError) else 'training_failure',
             }
     
-    def predict_transaction(self, transaction_features: Dict[str, float]) -> Dict[str, Any]:
+    def predict_transaction(
+        self, transaction_features: Dict[str, float], database=None
+    ) -> Dict[str, Any]:
         """
         Predict fraud for a transaction.
         
@@ -228,7 +241,9 @@ class MLService:
         """
         try:
             if self.feature_cols is None or self.scaler is None:
-                logger.warning("Model not trained yet, attempting to load from disk...")
+                logger.warning("Model not trained yet, attempting to load the active artifact...")
+                if database is not None:
+                    self.predictor.database = database
                 self.predictor.load_active_model()
                 if self.predictor.model is None:
                     return {
@@ -236,6 +251,15 @@ class MLService:
                         'probability': None,
                         'status': 'error',
                         'message': 'No trained model available'
+                    }
+                self.feature_cols = self.predictor.metadata.get("feature_names")
+                self.scaler = self.predictor.scaler
+                if not self.feature_cols or self.scaler is None:
+                    return {
+                        'prediction': None,
+                        'probability': None,
+                        'status': 'error',
+                        'message': 'The active model is missing its preprocessing artifacts'
                     }
             
             # Preprocess features

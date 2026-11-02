@@ -33,8 +33,8 @@ A production-grade Python application for detecting financial fraud using a comb
 | **Language** | Python | 3.12+ |
 | **Backend Framework** | FastAPI | 0.104+ |
 | **Frontend** | Streamlit | 1.29+ |
-| **Database** | MySQL | 8.0+ |
-| **ORM** | SQLAlchemy | 2.0+ |
+| **Database** | MongoDB | MongoDB 6.0+ / Atlas |
+| **Driver** | PyMongo | 4.x |
 | **Authentication** | JWT + Argon2 | PyJWT 2.15+, Argon2 25.1+ |
 | **Data Processing** | Pandas, NumPy | 2.1+, 1.26+ |
 | **Machine Learning** | Scikit-learn, Imbalanced-learn | 1.3+, 0.11+ |
@@ -51,9 +51,9 @@ financial-risk-fraud-detection/
 │   │   ├── security.py           # JWT and password utilities
 │   │   └── permissions.py        # Role-based access control
 │   ├── db/                       # Database layer
-│   │   ├── database.py           # SQLAlchemy engine and sessions
+│   │   ├── database.py           # MongoDB client, indexes, BSON conversion
 │   │   └── base.py               # Base model class
-│   ├── models/                   # SQLAlchemy ORM models
+│   ├── models/                   # Pydantic MongoDB document models
 │   │   ├── user.py               # User and authentication
 │   │   ├── customer.py           # Customer information
 │   │   ├── transaction.py        # Financial transactions
@@ -114,7 +114,7 @@ financial-risk-fraud-detection/
 │   └── processed/                # Processed data
 ├── models/                       # Trained ML models
 ├── reports/                      # Analysis reports
-├── migrations/                   # Alembic database migrations
+├── migrations/                   # Legacy SQL migration files (not used by runtime)
 ├── requirements.txt              # Python dependencies
 ├── .env.example                  # Environment template
 ├── .gitignore                    # Git ignore rules
@@ -128,7 +128,7 @@ financial-risk-fraud-detection/
 
 ### Prerequisites
 - Python 3.12 or later
-- MySQL 8.0 or later
+- An already-provisioned MongoDB deployment (not created by this application)
 - pip (Python package manager)
 
 ### Installation
@@ -158,10 +158,9 @@ cp .env.example .env
 # Edit .env with your settings
 ```
 
-5. **Initialize the database**
+5. **Initialize MongoDB indexes**
 ```bash
 python scripts/init_db.py
-# Follow prompts to create database and user
 ```
 
 6. **Create admin user**
@@ -234,16 +233,18 @@ Once the backend is running, visit:
 Key settings in `.env`:
 
 ```bash
-# Database
+# Local development; for cloud deployment use the Atlas URI from a secret manager.
+MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_DATABASE=fraud_detection_db
+```
+<!-- Retired SQL-era example below is ignored by the application.
+# The legacy DATABASE_URL line below is obsolete and ignored by the application.
 DATABASE_URL=mysql+pymysql://fraud_user:password@localhost:3306/fraud_detection_db
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=fraud_detection_db
-DB_USER=fraud_user
-DB_PASSWORD=your_secure_password
 
+-->
+```bash
 # JWT
-SECRET_KEY=your_super_secret_key_minimum_32_characters
+SECRET_KEY=<generate-a-random-secret-of-at-least-32-characters>
 JWT_EXPIRATION_HOURS=24
 
 # FastAPI
@@ -263,7 +264,7 @@ ML_MODEL_THRESHOLD=0.5
 
 ## Database Schema
 
-### Core Tables
+### Core Collections
 
 - **users**: User accounts with roles and authentication
 - **customers**: Customer/account holder information
@@ -273,6 +274,282 @@ ML_MODEL_THRESHOLD=0.5
 - **triggered_rules**: Rules triggered per transaction
 - **fraud_alerts**: High-risk alerts for analyst review
 - **audit_logs**: Complete action audit trail
+
+The application runtime uses MongoDB through PyMongo; SQLAlchemy is isolated to
+the optional, review-gated legacy data importer in `requirements-importer.txt`.
+The importer defaults to dry-run and must not be run with `--apply` without a
+separate explicit data-transfer approval.
+Importer failures report a safe `stage` and `reason` (for example,
+`stage=source_connection; reason=mysql_authentication_failed`) without printing
+driver exception messages, credentials, or record contents. Correct the reported
+connection or schema issue and repeat the dry-run; do not use `--apply` to bypass it.
+Missing-table failures list only expected application tables as
+`present_application_tables` and `missing_application_tables`. Verify the source
+database selected by `MYSQL_IMPORT_URL`; do not create empty tables or skip missing
+tables to bypass integrity checks.
+
+The importer has two explicit source profiles: strict modern **plural** tables
+(all ten collections required), and the recognized eight-table **singular**
+legacy schema (`user`, `customer`, `fraud_rule`, `transaction_record`,
+`fraud_assessment`, `triggered_rule`, `fraud_alert`, `audit_log`). Mixed profiles
+are blocked. The singular profile explicitly reports absent `investigation_cases`
+and `case_notes`; it never fabricates cases or silently skips a missing legacy
+table or record.
+
+Review an INFORMATION_SCHEMA metadata CSV **offline**, without settings, source
+credentials, database connections or record reads:
+
+```powershell
+python scripts\import_mysql_to_mongodb.py --schema-csv C:\Users\SUSHANTH\Desktop\results1.csv
+```
+
+Only the metadata header `TABLE_NAME,COLUMN_NAME,COLUMN_TYPE,IS_NULLABLE,COLUMN_KEY`
+is accepted (maximum 1,000 metadata rows). A legacy report exits **1 (blocked)**,
+not success. Counts are explicitly unavailable for metadata-only review. If
+`MYSQL_IMPORT_URL` is supplied locally for a separately approved source review,
+the legacy path uses schema inspection and aggregate-only SQL for source counts,
+null mandatory values, conflicting identities/external keys, missing references,
+and ambiguous assessment joins. It does not fetch records or contact MongoDB.
+Do not paste credentials or record exports into chat.
+
+The reusable profile/mapping in `scripts/mysql_schema_profiles.py` prepares
+non-importable review candidates: preserve integer `id` and integer references;
+use nonempty customer `external_id`, otherwise `legacy-customer-{id}`; generate
+`legacy-transaction_record-{id}` for the missing external transaction identifier;
+use source `rule_code` for rule identifiers. Assessment references require exactly
+one source assessment per transaction; alert customer references require a unique
+transaction and customer. Ambiguity blocks mapping. Customer names use both
+existing nonblank name parts only; missing names block, and user full names are
+never invented. Capitalized roles have an explicit `Admin/Analyst/Viewer` mapping,
+not a general coercion.
+
+All source fields remain in `legacy_metadata.source_fields`; exact timestamp text
+is additionally retained in `legacy_metadata.source_timestamps` to preserve
+microseconds/offsets beyond BSON date precision. Decimal values are never converted
+through float. Legacy source timezone, score scale, severity and rule-weight
+definitions are **unverified**: no normalization or score/category/severity
+conversion is permitted. Transaction status/payment method, user full name,
+rule/operator/threshold behavior, ML fields, alert status/review/assignment
+meaning, audit category/target/status, and customer risk defaults also require
+verified mappings. Neither model defaults nor invented assessments fill gaps.
+
+**Legacy live apply remains disabled until full preflight is implemented and approved**, even with `--apply`
+and matching `--confirm-target`. Reports list schema/mapping blockers and affected
+source counts where available; target conflicts, Decimal precision and timestamp
+validation are explicitly not checked during count-only review. Resolve field
+definitions and obtain a separately reviewed, validated mapping before any data
+transfer. The modern plural append-only path retains its dry-run default and
+requires both `--apply` and an exact `--confirm-target` matching
+`MONGODB_DATABASE`; offline `--schema-csv` cannot be combined with either flag.
+
+#### Resolving legacy definitions explicitly
+
+Historical source review found the singular schema in
+`8532e82:scripts/create_schema.py`. Its `severity_level DEFAULT 1` and
+`risk_weight DEFAULT 1.0` establish only defaults, **not** numeric severity meaning
+or a score conversion. At the same revision, `app/models/fraud_rule.py` and
+`app/services/risk_engine.py` operate on **plural** models. Their 0–100 scores and
+LOW/MEDIUM/HIGH categories establish target behavior but cannot certify the older
+singular records. No scoped historical session-timezone convention or evaluator
+for `severity_level` was found. Those are genuinely missing definitions, not
+values recoverable from the DECIMAL column declaration.
+
+`--mapping-config <local-reviewed.json>` now supplies explicit, **nonsecret** JSON
+decisions alongside offline metadata review or separately authorized count-only
+source review. No mapping values are shipped or guessed. The JSON requires
+`"version": 1`, `"profile": "legacy_singular_v1"`, `"reviewed": true`, and `"fields"`
+(an object keyed by `source_table.target_field`). Each entry requires `"kind"`,
+the exact `"source"` field, and a nonblank `"evidence"` reference to your reviewed
+definition. Unsupported keys, duplicate keys, executable operations, unreviewed
+files and files over 64 KiB are rejected. Evidence/configuration contents are never
+printed; the canonical SHA-256 identifies the exact review.
+
+Supported target/source pairs:
+
+| Target key | Source | Operation |
+|---|---|---|
+| `fraud_rule.severity` | `severity_level` | enum |
+| `fraud_rule.risk_weight` | `risk_weight` | decimal |
+| `fraud_assessment.risk_score` | `risk_score` | decimal |
+| `fraud_assessment.risk_category` | `risk_level` | enum |
+| `fraud_assessment.ml_score` | `ml_prediction` | decimal or archive |
+| `fraud_assessment.ml_confidence` | `ml_confidence` | archive |
+| `triggered_rule.triggered_value` | `triggered_value` | archive |
+| `fraud_alert.risk_score` | `risk_score` | decimal or archive |
+| `fraud_alert.alert_status` | `alert_status` | enum |
+| `fraud_alert.review_decision` | `review_decision` | enum or archive |
+| `fraud_alert.assigned_to` | `assigned_to` | archive (never a reviewer) |
+| `audit_log.action_category` | `action` | enum |
+| `audit_log.target_type` | `target_entity` | enum |
+| `audit_log.target_id` | `target_id` | archive (no guessed entity-reference cast) |
+
+For `"kind": "enum"`, provide `"values"` mapping **exact** source strings (numeric
+severity keys as JSON strings) to reviewed target values. Severity supports
+low/medium/high/critical; assessment category LOW/MEDIUM/HIGH; alert status
+pending/under_review/resolved/dismissed; review decisions
+approved/rejected/needs_review/dismissed/escalated. Unmapped source values block;
+case folding and numeric severity heuristics are not performed.
+
+For `"kind": "decimal"`, explicitly provide **decimal strings**, not JSON numbers,
+for `"source_min"`, `"source_max"`, `"target_min"`, `"target_max"`, `"multiplier"`
+and `"offset"`. The reviewed transformation is `source * multiplier + offset`.
+No clamping, float conversion or silent rounding is permitted. Source values must
+be finite Decimal within the reviewed source range; results must be exactly
+Decimal128-representable and in the reviewed target range (0–100 for scores, 0–1
+for ML scores, nonnegative rule weight). Candidate assessment category mappings
+must also agree with the target engine's exact boundaries (LOW ≤30, MEDIUM ≤70,
+otherwise HIGH); inconsistencies block rather than recomputing a source category.
+Candidate validation checks preserved source Decimals as well as mapped values,
+then the target model without serializing its generated defaults. Metadata review does not prove that
+actual rows satisfy these ranges. Count-only review counts invalid enum/range
+values; per-record precision/model and target-conflict checks still require a
+separately approved live-import workflow.
+
+`"kind": "archive"` explicitly keeps a supported optional/unrepresentable field
+only in legacy metadata. It does **not** reinterpret or expose an unknown score,
+confidence, reviewer or entity reference to the application. Required assessment
+scores cannot be archived into a valid live assessment. `"null_policy": "archive"`
+is accepted only for supported optional fields; mandatory nulls still block.
+This policy resolves irrelevant optional-field semantics without inventing data.
+
+Optional `"timezone"` requires `"session_offset"` (a verified numeric offset such
+as `+HH:MM`/`-HH:MM`, not SYSTEM, a guessed locale or a zone abbreviation) and
+`"evidence"`. During authorized source review, the importer queries only
+`@@session.time_zone`, `@@global.time_zone`, `@@system_time_zone`. The **session**
+offset must exactly match the review before MySQL TIMESTAMP values can be
+normalized. Global/system settings alone do not prove the source offset.
+Target timestamp conversion retains original microseconds/offset text in metadata.
+Offline review explicitly cannot verify server/session metadata.
+
+Resolved configuration fields no longer produce unconditional semantic blockers.
+Known-empty source tables likewise do not block for unused semantics; metadata-only
+review never assumes a table is empty. Ambiguous joins still block: configuration
+cannot select the newest assessment or create an assessment/customer.
+
+Remaining decisions that cannot be answered by this metadata:
+- Enrich actual user full names and missing customer name parts, or choose a
+  **separate archival-only** workflow; no email-as-name or fake person mapping.
+- Supply actual transaction status/payment method, customer risk profile, alert
+  severity and audit status from an authoritative enrichment source, or archive
+  rather than invent completed/success/low values.
+- Confirm each legacy rule code/type/operator/threshold implements the current
+  hard-coded R01–R10 evaluator; mapping severity/weight alone cannot prove this.
+- Define source score/severity/ML semantics and review mappings, or explicitly
+  archive the supported optional fields. Required assessment score/category still
+  need verified definitions.
+- Resolve duplicated/orphaned joins in an authoritative source or provide a
+  separately approved identity-level resolution; never pick a record heuristically.
+
+Safe **count-only** queries for a user-authorized source terminal (do not share
+row exports/credentials):
+
+```sql
+SELECT @@session.time_zone, @@global.time_zone, @@system_time_zone;
+SELECT COUNT(*) AS missing_user_full_names FROM `user`;
+SELECT COUNT(*) AS missing_customer_names FROM customer
+WHERE first_name IS NULL OR TRIM(first_name) = ''
+   OR last_name IS NULL OR TRIM(last_name) = '';
+SELECT MIN(risk_score) AS observed_min, MAX(risk_score) AS observed_max,
+       SUM(risk_score IS NULL) AS missing_scores FROM fraud_assessment;
+SELECT COUNT(*) AS ambiguous_alerts
+FROM fraud_alert a JOIN (
+  SELECT transaction_id FROM fraud_assessment GROUP BY transaction_id HAVING COUNT(*) > 1
+) x ON x.transaction_id = a.transaction_id;
+```
+
+Observed ranges establish **data bounds only**, not business scale definitions.
+No queries above are executed by offline review. `--apply` on the legacy path also
+requires `--mapping-config` and `--confirm-mapping <exact SHA-256>` plus the existing
+target confirmation, then remains blocked for unperformed live preflight. A matching
+hash is not approval for record reads, target access or transfer.
+
+#### Separate raw legacy archive (chosen resolution)
+
+Use `--archive` to keep historical data **outside the live application's database
+and models**. Unknown scores, missing names/statuses and ambiguous relationships
+do not need operational interpretations in this archive. All eight singular
+source tables are reviewed; original integer identities/references are retained.
+No assessments/cases, names, statuses or business scales are synthesized. The
+live application has no archive integration and must not receive archive credentials.
+
+Start with this **offline metadata-only** command, which reads no records and
+connects to neither database:
+
+```powershell
+python scripts\import_mysql_to_mongodb.py --archive --schema-csv C:\Users\SUSHANTH\Desktop\results1.csv
+```
+
+Success here means only recognized metadata, **not** validated archive contents
+or approval to transfer. The report explicitly says counts/digest are unavailable.
+No data transfer has been performed as part of preparing this feature.
+
+Only after separately approving source-record review, set `MYSQL_IMPORT_URL` in
+your local terminal (never paste it into chat), then run:
+
+```powershell
+python scripts\import_mysql_to_mongodb.py --archive --archive-database legacy_archive --batch-size 250
+```
+
+This default **dry-run** uses bounded keyset batches within a repeatable-read,
+read-only MySQL transaction. It reviews original records locally in memory, emits
+only table counts, a credential-sanitized content SHA-256, omission counts and
+estimated BSON bytes. It does not access MongoDB, create export files or write any
+target documents. Thus target conflicts and actual archive capacity are not yet
+checked. Counts are printed in this exact order:
+`user,customer,fraud_rule,transaction_record,fraud_assessment,triggered_rule,fraud_alert,audit_log`.
+
+Archive documents go to these **singular** collections in a dedicated database,
+not `users`, `customers` or other live collections. The archive database must differ
+from `MONGODB_DATABASE` (case-insensitive comparison) and cannot be admin/config/local.
+Original values are nested under `source_fields` with source table/identity,
+archive format and per-document content hashes. Exact Decimals use Decimal128 where
+representable, otherwise an explicitly tagged exact decimal string. Datetime/date/
+time values are tagged original ISO text, retaining microseconds and explicit
+offsets; naive values are marked timezone **unknown**, never falsely assigned UTC.
+Raw values are labelled unverified/non-operational. There is no live schema/index/
+sequence initialization or operational risk evaluation.
+
+**Credential material is excluded**, including `user.password_hash` and recognized
+password/token/key/connection fields recursively in structured audit data.
+Recognizable embedded credential strings are redacted. Omission counts are
+reported; hashes are computed only after credential removal. This is intentionally
+**not a credential-preserving/lossless backup**. Contact details and free text
+remain potentially sensitive: approve only the intended synthetic fields and
+inspect/sanitize the source locally before transfer. A key/string filter cannot
+guarantee detection of arbitrary unlabelled secrets; do not upload any source with
+such material.
+
+For a later, separately approved upload, set `MONGODB_ARCHIVE_URI` privately in the
+local terminal using an archive-only writer credential. `MONGODB_URI` is not used
+for archive upload. Supply the exact prior dry-run digest and comma-separated
+count string (replace the placeholders):
+
+```powershell
+python scripts\import_mysql_to_mongodb.py --archive --archive-database legacy_archive --apply --confirm-target legacy_archive --confirm-archive-digest "<reviewed SHA-256>" --confirm-archive-counts "<reviewed count string>"
+```
+
+This is **not** permission to run the command now. Apply recomputes counts/digest
+before target access and again during target preflight. Mismatches block; missing
+proofs block. It checks every identity against the archive, refuses conflicting
+content/unexpected collections, and performs append-only ordered inserts using
+source numeric `_id`. Identical documents are skipped on rerun; no overwrites,
+updates, drops, deletes or live database writes occur. Partial failures remain
+explicit and can be reviewed/rerun without overwriting existing records. Source
+should be frozen/read-only during the review and subsequent apply so its approved
+digest remains stable.
+
+The default `--archive-max-bytes` budget is 400 MiB. Dry-run reports BSON bytes only;
+apply checks database data/index bytes plus twice pending BSON bytes for headroom.
+This is an estimate, **not an Atlas quota guarantee**: manually check remaining
+deployment-wide quota, other databases, indexes, storage/compression and plan
+limits before upload; lower the budget when appropriate.
+
+“Read-only archive” describes the intended subsequent viewing workflow and the
+application separation, **not provisioned database permission enforcement**.
+No Atlas permissions/users are created here. For later viewing, provision a
+separate Atlas credential with `read` only on the archive database; keep the
+temporary uploader credential separately scoped and revoke it after verification.
+Do not give the live application archive read/write access or reuse its credential.
 
 ### Relationships
 ```
@@ -345,7 +622,7 @@ python scripts/train_model.py
 - Granular permission checks
 
 ### Data Protection
-- SQL injection protection via SQLAlchemy
+- MongoDB query construction with validated request models
 - Request validation with Pydantic
 - File upload size limits
 - Safe CSV export against formula injection
@@ -450,13 +727,11 @@ Log levels: DEBUG, INFO, WARNING, ERROR
 
 ## Troubleshooting
 
-### Database Connection Issues
+### MongoDB Connection Issues
 ```bash
-# Test MySQL connectivity
-mysql -h localhost -u fraud_user -p fraud_detection_db -e "SELECT 1;"
-
-# Check connection string in .env
-# Ensure MySQL service is running
+# Set MONGODB_URI through your environment or secret manager.
+# Set MONGODB_DATABASE to the intended database name.
+# Startup fails explicitly when the URI is missing or MongoDB cannot be reached.
 # Verify firewall rules
 ```
 
@@ -512,7 +787,7 @@ For issues, questions, or suggestions:
 - Credit Card Fraud Detection dataset from Kaggle (MLG-ULB)
 - FastAPI framework and documentation
 - Streamlit for rapid dashboard development
-- SQLAlchemy for ORM excellence
+- PyMongo and MongoDB document storage
 
 ---
 

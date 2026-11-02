@@ -1,30 +1,28 @@
-"""Admin-only access to persisted audit events and period summaries."""
+"""Admin-only access to persisted MongoDB audit events."""
 
-from datetime import date, datetime, time
+import re
+from datetime import date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
 
 from app.core.permissions import UserRole
 from app.core.security import require_role
-from app.db.database import get_db
-from app.models import AuditLog, User
-
+from app.db.database import from_bson, get_db
 
 router = APIRouter(prefix="/api/audit-logs", tags=["audit logs"])
 
 
-def period_query(db: Session, start_date: date | None, end_date: date | None):
+def period_query(db, start_date: date | None, end_date: date | None):
     if start_date and end_date and start_date > end_date:
         raise HTTPException(422, detail="Start date must not be after end date")
-    query = db.query(AuditLog)
-    if start_date:
-        query = query.filter(AuditLog.action_timestamp >= datetime.combine(start_date, time.min))
-    if end_date:
-        query = query.filter(
-            AuditLog.action_timestamp <= datetime.combine(end_date, time.max)
-        )
+    query = {}
+    if start_date or end_date:
+        bounds = {}
+        if start_date:
+            bounds["$gte"] = datetime.combine(start_date, time.min, timezone.utc)
+        if end_date:
+            bounds["$lte"] = datetime.combine(end_date, time.max, timezone.utc)
+        query["action_timestamp"] = bounds
     return query
 
 
@@ -37,42 +35,39 @@ def list_audit_logs(
     target_entity: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+    current_user=Depends(require_role(UserRole.ADMIN)),
 ):
     query = period_query(db, start_date, end_date)
     if actor:
-        query = query.join(AuditLog.actor).filter(User.email == actor.strip().lower())
+        users = db["users"].find({"email": actor.strip().lower()}, {"id": 1})
+        ids = [doc["id"] for doc in users]
+        query["actor_id"] = {"$in": ids} if ids else -1
     if action:
-        prefix = action.lower()
-        query = query.filter(or_(
-            AuditLog.action == prefix,
-            AuditLog.action.startswith(prefix + "_", autoescape=True),
-        ))
+        prefix = re.escape(action.lower())
+        query["action"] = {"$regex": f"^{prefix}(?:_|$)", "$options": "i"}
     if target_entity:
-        query = query.filter(AuditLog.target_type == target_entity.lower())
-    total = query.count()
-    events = (
-        query.options(joinedload(AuditLog.actor))
-        .order_by(AuditLog.action_timestamp.desc(), AuditLog.id.desc())
-        .offset(skip).limit(limit).all()
-    )
-    return {
-        "total": total,
-        "items": [{
-            "id": event.id,
-            "timestamp": event.action_timestamp,
-            "actor": event.actor.email if event.actor else "System",
-            "action": event.action,
-            "target_type": event.target_type,
-            "target_id": event.target_id,
-            "status": event.action_status,
-            "success": event.action_status == "success",
-            "details": event.status_message or "",
-            "changes_before": event.changes_before,
-            "changes_after": event.changes_after,
-        } for event in events],
-    }
+        query["target_type"] = target_entity.lower()
+    collection = db["audit_logs"]
+    total = collection.count_documents(query)
+    items = []
+    for raw in collection.find(query).sort([("action_timestamp", -1), ("id", -1)]).skip(skip).limit(limit):
+        event = from_bson(raw)
+        user = db["users"].find_one({"id": event.get("actor_id")}) if event.get("actor_id") else None
+        items.append({
+            "id": event["id"],
+            "timestamp": event["action_timestamp"],
+            "actor": user["email"] if user else "System",
+            "action": event["action"],
+            "target_type": event["target_type"],
+            "target_id": event.get("target_id"),
+            "status": event["action_status"],
+            "success": event["action_status"] == "success",
+            "details": event.get("status_message") or "",
+            "changes_before": event.get("changes_before"),
+            "changes_after": event.get("changes_after"),
+        })
+    return {"total": total, "items": items}
 
 
 @router.get("/compliance-report")
@@ -80,38 +75,36 @@ def compliance_report(
     report_type: str,
     start_date: date,
     end_date: date,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db=Depends(get_db),
+    current_user=Depends(require_role(UserRole.ADMIN)),
 ):
     query = period_query(db, start_date, end_date)
     if report_type == "user_access":
-        query = query.filter(AuditLog.action_category == "authentication")
+        query["action_category"] = "authentication"
     elif report_type == "data_changes":
-        query = query.filter(or_(
-            AuditLog.action.startswith("create_"),
-            AuditLog.action.startswith("update_"),
-            AuditLog.action.startswith("delete_"),
-        ))
+        query["action"] = {"$regex": r"^(create_|update_|delete_)", "$options": "i"}
     elif report_type in {"alerts_review", "rule_modifications", "model_updates"}:
-        targets = {
+        target_map = {
             "alerts_review": ["fraud_alert"],
             "rule_modifications": ["fraud_rule"],
             "model_updates": ["model", "ml_model"],
         }
-        query = query.filter(AuditLog.target_type.in_(targets[report_type]))
+        query["target_type"] = {"$in": target_map[report_type]}
     elif report_type == "security_events":
-        query = query.filter(or_(
-            AuditLog.action_category == "authentication",
-            AuditLog.action_status != "success",
-        ))
+        query["$or"] = [
+            {"action_category": "authentication"},
+            {"action_status": {"$ne": "success"}},
+        ]
     else:
         raise HTTPException(422, detail="Unknown report type")
+    collection = db["audit_logs"]
+    docs = list(collection.find(query, {"actor_id": 1, "action_status": 1}))
     return {
         "summary": {
-            "total_events": query.count(),
-            "unique_users": query.with_entities(func.count(func.distinct(AuditLog.actor_id))).scalar(),
-            "failed_actions": query.filter(AuditLog.action_status == "failure").count(),
-            "exceptions": query.filter(AuditLog.action_status.notin_(["success", "failure"])).count(),
+            "total_events": len(docs),
+            "unique_users": len({doc.get("actor_id") for doc in docs if doc.get("actor_id") is not None}),
+            "failed_actions": sum(doc.get("action_status") == "failure" for doc in docs),
+            "exceptions": sum(doc.get("action_status") not in {"success", "failure"} for doc in docs),
         },
         "findings": [],
     }

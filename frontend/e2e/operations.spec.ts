@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { login, logout } from "./helpers";
 
 test("transactions filter correctly, open details, and analytics render backend records", async ({ page }) => {
   await login(page);
@@ -13,7 +13,7 @@ test("transactions filter correctly, open details, and analytics render backend 
   await page.getByRole("link", { name: "Risk analytics", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Customer risk profiles" })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });
 
 test("rule changes and team role updates persist after reload", async ({ page }) => {
@@ -37,7 +37,7 @@ test("rule changes and team role updates persist after reload", async ({ page })
   await expect(role).toHaveValue("viewer");
   await page.getByRole("link", { name: "Audit trail", exact: true }).click();
   await expect(page.getByRole("cell", { name: "Update User", exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });
 
 test("alert decision is persisted and read back in the resolved queue", async ({ page }) => {
@@ -53,5 +53,5 @@ test("alert decision is persisted and read back in the resolved queue", async ({
   await page.reload();
   await page.getByRole("combobox", { name: /^Status/ }).selectOption("RESOLVED");
   await expect(page.getByRole("button", { name: "ALT-1", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });

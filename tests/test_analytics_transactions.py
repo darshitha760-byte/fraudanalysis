@@ -3,18 +3,19 @@ Tests for transaction analytics functionality.
 """
 
 import pytest
-from sqlalchemy import event
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from app.services.analytics_service import AnalyticsService
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert, FraudAssessment
 from tests.conftest import create_test_fraud_assessment_and_alert
+from tests.conftest import insert_test_document
 
 
-def test_statistics_batches_assessments_instead_of_querying_per_transaction(db, sample_customer):
+def test_statistics_batches_assessments_instead_of_querying_per_transaction(
+    db, sample_customer, monkeypatch, mongo_server_only
+):
     transactions = [
         Transaction(
             customer_id=sample_customer.id, transaction_id=f"QUERY_BOUND_{index}",
@@ -22,26 +23,29 @@ def test_statistics_batches_assessments_instead_of_querying_per_transaction(db, 
         )
         for index in range(100)
     ]
-    db.add_all(transactions)
-    db.flush()
-    db.add_all([
-        FraudAssessment(transaction_id=transaction.id, risk_score=80, risk_category="high")
-        for transaction in transactions[:50]
-    ])
-    db.commit()
-    statements = []
-    def count_selects(connection, cursor, statement, parameters, context, executemany):
-        if statement.lstrip().upper().startswith("SELECT"):
-            statements.append(statement)
-    engine = db.get_bind()
-    event.listen(engine, "before_cursor_execute", count_selects)
-    try:
-        result = AnalyticsService.get_transaction_statistics(db)
-    finally:
-        event.remove(engine, "before_cursor_execute", count_selects)
+    for transaction in transactions:
+        insert_test_document(db, transaction)
+    for transaction in transactions[:50]:
+        insert_test_document(db, FraudAssessment(
+            transaction_id=transaction.id, risk_score=80, risk_category="high"
+        ))
+    collection_type = type(db["transactions"])
+    aggregate = collection_type.aggregate
+    pipelines = []
+
+    def observe_aggregate(collection, pipeline, *args, **kwargs):
+        if collection.name == "transactions":
+            pipelines.append(pipeline)
+        return aggregate(collection, pipeline, *args, **kwargs)
+
+    # PyMongo creates a fresh Collection wrapper for each db["transactions"]
+    # access, so patch the class method rather than one transient instance.
+    monkeypatch.setattr(collection_type, "aggregate", observe_aggregate)
+    result = AnalyticsService.get_transaction_statistics(db)
     assert result["total_transactions"] == 100
     assert result["high_risk_transactions"] == 50
-    assert len(statements) <= 3
+    assert len(pipelines) == 1
+    assert any("$lookup" in stage for stage in pipelines[0])
 
 
 @pytest.fixture
@@ -63,16 +67,13 @@ def sample_customer(db):
         city="New York",
         risk_profile="low"
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 class TestTransactionAnalytics:
     """Test suite for transaction-level analytics."""
 
-    def test_get_transaction_statistics_basic(self, db: Session, sample_customer: Customer):
+    def test_get_transaction_statistics_basic(self, db, sample_customer: Customer, mongo_server_only):
         """Test basic transaction statistics retrieval."""
         # Create sample transactions
         for i in range(5):
@@ -86,8 +87,7 @@ class TestTransactionAnalytics:
                 merchant_name="Test Merchant",
                 merchant_id="M001"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
 
         # Get statistics
         stats = AnalyticsService.get_transaction_statistics(db, days=30)
@@ -100,7 +100,7 @@ class TestTransactionAnalytics:
         assert "low_risk_transactions" in stats
 
     def test_get_transaction_statistics_with_customer_filter(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer, mongo_server_only
     ):
         """Test transaction statistics with customer filter."""
         # Create transactions for sample customer
@@ -115,8 +115,7 @@ class TestTransactionAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
 
         # Get statistics for specific customer
         stats = AnalyticsService.get_transaction_statistics(
@@ -127,8 +126,9 @@ class TestTransactionAnalytics:
 
     def test_get_transaction_statistics_counts_lowercase_assessment_categories(
         self,
-        db: Session,
+        db,
         sample_customer: Customer,
+        mongo_server_only,
     ):
         for index, category in enumerate(("low", "medium", "high")):
             transaction = Transaction(
@@ -140,9 +140,9 @@ class TestTransactionAnalytics:
                 currency="USD",
                 status="completed",
             )
-            db.add(transaction)
-            db.flush()
-            db.add(
+            insert_test_document(db, transaction)
+            insert_test_document(
+                db,
                 FraudAssessment(
                     transaction_id=transaction.id,
                     risk_score=Decimal("20"),
@@ -150,7 +150,6 @@ class TestTransactionAnalytics:
                     rules_triggered_count=0,
                 )
             )
-        db.commit()
 
         stats = AnalyticsService.get_transaction_statistics(db, days=30)
 
@@ -158,7 +157,7 @@ class TestTransactionAnalytics:
         assert stats["medium_risk_transactions"] == 1
         assert stats["high_risk_transactions"] == 1
 
-    def test_get_transaction_trends(self, db: Session, sample_customer: Customer):
+    def test_get_transaction_trends(self, db, sample_customer: Customer, mongo_server_only):
         """Test daily transaction trends."""
         # Create transactions across multiple days
         base_date = datetime.utcnow() - timedelta(days=10)
@@ -174,8 +173,7 @@ class TestTransactionAnalytics:
                     merchant_name="Test",
                     merchant_id="M001"
                 )
-                db.add(txn)
-        db.commit()
+                insert_test_document(db, txn)
 
         # Get trends
         trends = AnalyticsService.get_transaction_trends(db, days=30)
@@ -184,7 +182,7 @@ class TestTransactionAnalytics:
         assert all("date" in t and "transaction_count" in t for t in trends)
         assert all(t["transaction_count"] >= 0 for t in trends)
 
-    def test_get_risk_distribution(self, db: Session, sample_customer: Customer):
+    def test_get_risk_distribution(self, db, sample_customer: Customer, mongo_server_only):
         """Test risk score distribution."""
         # Create transactions and their fraud assessments/alerts to assign risk scores
         # Low risk transactions (0-30)
@@ -199,8 +197,7 @@ class TestTransactionAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             # Add assessment and alert with low risk score
             create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
@@ -219,8 +216,7 @@ class TestTransactionAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=50, risk_category="medium"
@@ -238,14 +234,12 @@ class TestTransactionAnalytics:
                 merchant_name="Test",
                 merchant_id="M001"
             )
-            db.add(txn)
-            db.flush()
+            insert_test_document(db, txn)
             create_test_fraud_assessment_and_alert(
                 db, txn.id, sample_customer.id,
                 risk_score=80, risk_category="high"
             )
 
-        db.commit()
 
         # Get distribution
         distribution = AnalyticsService.get_risk_distribution(db, days=30)
@@ -255,7 +249,7 @@ class TestTransactionAnalytics:
         assert distribution["HIGH"] >= 1
         assert distribution["total"] == 6
 
-    def test_transaction_statistics_empty(self, db: Session):
+    def test_transaction_statistics_empty(self, db):
         """Test statistics with no transactions."""
         stats = AnalyticsService.get_transaction_statistics(db, days=30)
 
@@ -264,7 +258,7 @@ class TestTransactionAnalytics:
         assert stats["average_amount"] == 0
 
     def test_transaction_statistics_time_filtering(
-        self, db: Session, sample_customer: Customer
+        self, db, sample_customer: Customer
     ):
         """Test that statistics respects time window."""
         # Create old transaction
@@ -278,7 +272,7 @@ class TestTransactionAnalytics:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(old_txn)
+        insert_test_document(db, old_txn)
 
         # Create recent transaction
         recent_txn = Transaction(
@@ -291,8 +285,7 @@ class TestTransactionAnalytics:
             merchant_name="Test",
             merchant_id="M001"
         )
-        db.add(recent_txn)
-        db.commit()
+        insert_test_document(db, recent_txn)
 
         # Get 30-day statistics (should exclude old transaction)
         stats = AnalyticsService.get_transaction_statistics(db, days=30)

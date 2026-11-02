@@ -1,4 +1,10 @@
-# Complete Deployment Guide: Render + Vercel
+# Legacy Deployment Guide: Render + Vercel (Superseded)
+
+> **Do not execute the historical SQL/Alembic steps below.** The application
+> now requires an already provisioned MongoDB deployment via `MONGODB_URI` and
+> `MONGODB_DATABASE`. No database transfer, cloud provisioning, or deployment
+> was performed. MongoDB index initialization is non-destructive and is
+> available through `python run_migrations.py initialize`.
 
 ## Quick Summary
 

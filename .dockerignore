@@ -34,9 +34,42 @@ coverage.xml
 # OS
 .DS_Store
 Thumbs.db
-.env
-.env.local
-.env.*.local
+# Never include dotenv files in an image, including tracked production files
+# and safe-looking templates. Configure runtime settings in the host instead.
+.env*
+**/.env*
+*.env
+**/*.env
+
+# Personal assets and local data must never enter a deployment image.
+RESUMES/
+resumes/
+**/RESUMES/
+**/resumes/
+/data/
+/models/
+backup/
+**/backup/
+**/backups/
+*.sql
+*.dump
+*.bson
+*.archive
+*.db
+*.sqlite
+*.sqlite3
+*.csv
+*.parquet
+*.jsonl
+*.pdf
+*.docx
+*.xlsx
+reports/
+**/reports/
+logs/
+**/logs/
+htmlcov/
+.coverage
 
 # Git
 .git/

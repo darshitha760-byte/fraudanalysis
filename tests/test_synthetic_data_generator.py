@@ -1,7 +1,5 @@
 from datetime import datetime, timedelta
 
-from app.models.customer import Customer
-from app.models.transaction import Transaction
 from scripts.generate_synthetic_data import SyntheticDataGenerator
 
 
@@ -19,7 +17,7 @@ def test_synthetic_transactions_are_recent_and_insert_with_valid_customers(test_
     inserted = SyntheticDataGenerator.insert_into_database(generated, test_session)
 
     assert inserted == 6
-    assert test_session.query(Transaction).count() == 6
-    assert test_session.query(Customer).count() == len(
-        generated["customer_id"].unique()
-    )
+    assert test_session["transactions"].count_documents({}) == 6
+    assert test_session["customers"].count_documents(
+        {"customer_id": {"$regex": "^SYNTH-CUST-"}}
+    ) == len(generated["customer_id"].unique())

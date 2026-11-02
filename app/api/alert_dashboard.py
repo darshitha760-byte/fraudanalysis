@@ -4,17 +4,13 @@ Alert Dashboard API - Provides analytics and statistics for alert management.
 
 import logging
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from pydantic import BaseModel
 
 from app.db.database import get_db
-from app.models.fraud_alert import FraudAlert
 from app.models.user import User
-from app.services.audit_service import AuditService
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -99,7 +95,7 @@ class ApprovalRateResponse(BaseModel):
 @router.get("/summary")
 async def get_alert_summary_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get overall alert statistics summary.
@@ -120,38 +116,26 @@ async def get_alert_summary_stats(
     
     try:
         # Count by status
-        total = db.query(func.count(FraudAlert.id)).scalar() or 0
-        pending = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_status == "PENDING"
-        ).scalar() or 0
-        under_review = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_status == "UNDER_REVIEW"
-        ).scalar() or 0
-        resolved = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_status == "RESOLVED"
-        ).scalar() or 0
+        alerts = db["fraud_alerts"]
+        total = alerts.count_documents({})
+        pending = alerts.count_documents({"alert_status": {"$regex": "^pending$", "$options": "i"}})
+        under_review = alerts.count_documents({"alert_status": {"$regex": "^under_review$", "$options": "i"}})
+        resolved = alerts.count_documents({"alert_status": {"$regex": "^resolved$", "$options": "i"}})
         
         # Count by severity
-        high_severity = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "HIGH"
-        ).scalar() or 0
-        medium_severity = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "MEDIUM"
-        ).scalar() or 0
-        low_severity = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "LOW"
-        ).scalar() or 0
+        high_severity = alerts.count_documents({"alert_severity": {"$regex": "^high$", "$options": "i"}})
+        medium_severity = alerts.count_documents({"alert_severity": {"$regex": "^medium$", "$options": "i"}})
+        low_severity = alerts.count_documents({"alert_severity": {"$regex": "^low$", "$options": "i"}})
         
         # Average risk score
-        avg_risk = db.query(func.avg(FraudAlert.risk_score)).scalar() or 0.0
+        average = list(alerts.aggregate([{"$group": {"_id": None, "value": {"$avg": "$risk_score"}}}]))
+        avg_risk = average[0]["value"] if average else 0.0
+        if hasattr(avg_risk, "to_decimal"):
+            avg_risk = avg_risk.to_decimal()
         
         # Decision rates
-        approved = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "APPROVED"
-        ).scalar() or 0
-        rejected = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "REJECTED"
-        ).scalar() or 0
+        approved = alerts.count_documents({"review_decision": {"$regex": "^approved$", "$options": "i"}})
+        rejected = alerts.count_documents({"review_decision": {"$regex": "^rejected$", "$options": "i"}})
         
         total_decisions = approved + rejected
         approval_rate = (approved / total_decisions * 100) if total_decisions > 0 else 0
@@ -183,7 +167,7 @@ async def get_alert_summary_stats(
 async def get_alert_timeline(
     days: int = Query(7, ge=1, le=90, description="Number of days to include"),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get alert creation timeline over specified period.
@@ -200,7 +184,7 @@ async def get_alert_timeline(
     
     try:
         # Calculate date range
-        end_date = datetime.utcnow().date()
+        end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=days)
         
         # Query alerts for each day
@@ -210,32 +194,19 @@ async def get_alert_timeline(
             next_date = current_date + timedelta(days=1)
             
             # Count all alerts created on this day
-            total_count = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.created_at >= current_date,
-                FraudAlert.created_at < next_date
-            ).scalar() or 0
+            interval = {"created_at": {"$gte": datetime.combine(current_date, datetime.min.time(), timezone.utc),
+                                       "$lt": datetime.combine(next_date, datetime.min.time(), timezone.utc)}}
+            total_count = db["fraud_alerts"].count_documents(interval)
             
             # Count by severity
-            high_count = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.created_at >= current_date,
-                FraudAlert.created_at < next_date,
-                FraudAlert.alert_severity == "HIGH"
-            ).scalar() or 0
+            high_count = db["fraud_alerts"].count_documents({**interval, "alert_severity": {"$regex": "^high$", "$options": "i"}})
             
-            medium_count = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.created_at >= current_date,
-                FraudAlert.created_at < next_date,
-                FraudAlert.alert_severity == "MEDIUM"
-            ).scalar() or 0
+            medium_count = db["fraud_alerts"].count_documents({**interval, "alert_severity": {"$regex": "^medium$", "$options": "i"}})
             
-            low_count = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.created_at >= current_date,
-                FraudAlert.created_at < next_date,
-                FraudAlert.alert_severity == "LOW"
-            ).scalar() or 0
+            low_count = db["fraud_alerts"].count_documents({**interval, "alert_severity": {"$regex": "^low$", "$options": "i"}})
             
             timeline_points.append(TimelinePoint(
-                timestamp=datetime.combine(current_date, datetime.min.time()),
+                timestamp=datetime.combine(current_date, datetime.min.time(), timezone.utc),
                 alert_count=total_count,
                 high_priority=high_count,
                 medium_priority=medium_count,
@@ -261,7 +232,7 @@ async def get_alert_timeline(
 @router.get("/by-analyst", response_model=AnalystStatsResponse)
 async def get_analyst_performance_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get alert review statistics by analyst.
@@ -284,39 +255,26 @@ async def get_analyst_performance_stats(
         analyst_stats = []
         
         # Query distinct analysts
-        analysts = db.query(FraudAlert.reviewed_by).filter(
-            FraudAlert.reviewed_by.isnot(None)
-        ).distinct().all()
+        analysts = db["fraud_alerts"].distinct("reviewed_by", {"reviewed_by": {"$ne": None}})
         
         total_reviewed = 0
         
-        for (analyst_id,) in analysts:
+        for analyst_id in analysts:
             if not analyst_id:
                 continue
             
             # Get analyst info
-            analyst_user = db.query(User).filter(User.id == analyst_id).first()
-            analyst_name = analyst_user.username if analyst_user else f"User {analyst_id}"
+            analyst_user = db["users"].find_one({"id": analyst_id})
+            analyst_name = analyst_user.get("full_name", analyst_user.get("email")) if analyst_user else f"User {analyst_id}"
             
             # Count alerts reviewed by this analyst
-            alerts_reviewed = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.reviewed_by == analyst_id
-            ).scalar() or 0
+            alerts_reviewed = db["fraud_alerts"].count_documents({"reviewed_by": analyst_id})
             
-            approved = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.reviewed_by == analyst_id,
-                FraudAlert.review_decision == "APPROVED"
-            ).scalar() or 0
+            approved = db["fraud_alerts"].count_documents({"reviewed_by": analyst_id, "review_decision": {"$regex": "^approved$", "$options": "i"}})
             
-            rejected = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.reviewed_by == analyst_id,
-                FraudAlert.review_decision == "REJECTED"
-            ).scalar() or 0
+            rejected = db["fraud_alerts"].count_documents({"reviewed_by": analyst_id, "review_decision": {"$regex": "^rejected$", "$options": "i"}})
             
-            escalated = db.query(func.count(FraudAlert.id)).filter(
-                FraudAlert.reviewed_by == analyst_id,
-                FraudAlert.review_decision == "NEEDS_REVIEW"
-            ).scalar() or 0
+            escalated = db["fraud_alerts"].count_documents({"reviewed_by": analyst_id, "review_decision": {"$regex": "^needs_review$", "$options": "i"}})
             
             approval_rate = (approved / alerts_reviewed * 100) if alerts_reviewed > 0 else 0
             
@@ -359,7 +317,7 @@ async def get_analyst_performance_stats(
 @router.get("/by-priority", response_model=PriorityStatsResponse)
 async def get_priority_distribution_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get alert distribution by priority/severity.
@@ -375,17 +333,10 @@ async def get_priority_distribution_stats(
         )
     
     try:
-        high = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "HIGH"
-        ).scalar() or 0
-        
-        medium = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "MEDIUM"
-        ).scalar() or 0
-        
-        low = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.alert_severity == "LOW"
-        ).scalar() or 0
+        alerts = db["fraud_alerts"]
+        high = alerts.count_documents({"alert_severity": {"$regex": "^high$", "$options": "i"}})
+        medium = alerts.count_documents({"alert_severity": {"$regex": "^medium$", "$options": "i"}})
+        low = alerts.count_documents({"alert_severity": {"$regex": "^low$", "$options": "i"}})
         
         total = high + medium + low
         
@@ -416,7 +367,7 @@ async def get_priority_distribution_stats(
 @router.get("/approval-rate", response_model=ApprovalRateResponse)
 async def get_approval_rate_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
 ):
     """
     Get decision statistics and approval/rejection rates.
@@ -431,22 +382,21 @@ async def get_approval_rate_stats(
     
     try:
         # Current period (last 30 days)
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-        
-        current_approved = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "APPROVED",
-            FraudAlert.review_timestamp >= thirty_days_ago,
-        ).scalar() or 0
-        
-        current_rejected = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "REJECTED",
-            FraudAlert.review_timestamp >= thirty_days_ago,
-        ).scalar() or 0
-        
-        current_escalated = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "NEEDS_REVIEW",
-            FraudAlert.review_timestamp >= thirty_days_ago,
-        ).scalar() or 0
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        alert_collection = db["fraud_alerts"]
+
+        def decision_count(decision, since, until=None):
+            query = {
+                "review_decision": {"$regex": f"^{decision}$", "$options": "i"},
+                "review_timestamp": {"$gte": since},
+            }
+            if until is not None:
+                query["review_timestamp"]["$lt"] = until
+            return alert_collection.count_documents(query)
+
+        current_approved = decision_count("APPROVED", thirty_days_ago)
+        current_rejected = decision_count("REJECTED", thirty_days_ago)
+        current_escalated = decision_count("NEEDS_REVIEW", thirty_days_ago)
         
         current_total = current_approved + current_rejected + current_escalated
         current_approval_rate = (
@@ -454,25 +404,10 @@ async def get_approval_rate_stats(
         )
         
         # Previous period (30-60 days ago)
-        sixty_days_ago = datetime.utcnow() - timedelta(days=60)
-        
-        prev_approved = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "APPROVED",
-            FraudAlert.review_timestamp >= sixty_days_ago,
-            FraudAlert.review_timestamp < thirty_days_ago,
-        ).scalar() or 0
-        
-        prev_rejected = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "REJECTED",
-            FraudAlert.review_timestamp >= sixty_days_ago,
-            FraudAlert.review_timestamp < thirty_days_ago,
-        ).scalar() or 0
-        
-        prev_escalated = db.query(func.count(FraudAlert.id)).filter(
-            FraudAlert.review_decision == "NEEDS_REVIEW",
-            FraudAlert.review_timestamp >= sixty_days_ago,
-            FraudAlert.review_timestamp < thirty_days_ago,
-        ).scalar() or 0
+        sixty_days_ago = datetime.now(timezone.utc) - timedelta(days=60)
+        prev_approved = decision_count("APPROVED", sixty_days_ago, thirty_days_ago)
+        prev_rejected = decision_count("REJECTED", sixty_days_ago, thirty_days_ago)
+        prev_escalated = decision_count("NEEDS_REVIEW", sixty_days_ago, thirty_days_ago)
         
         prev_total = prev_approved + prev_rejected + prev_escalated
         prev_approval_rate = (

@@ -1,6 +1,14 @@
-# 📊 DEPLOYMENT SUMMARY - Render & Vercel
+# Legacy Render & Vercel Deployment Notes (Not Validated)
 
-## ✅ Mission Accomplished!
+> **Do not follow the historical deployment steps below.** The active
+> application uses PyMongo with `MONGODB_URI` and `MONGODB_DATABASE`; no Atlas
+> project, cluster, database user, network rule, or deployment was created or
+> verified. Supply an approved Atlas URI through a secret manager. The retired
+> `run_migrations.py` command only checks connectivity and initializes indexes;
+> it does not migrate SQL data. Do not run legacy SQL/Alembic steps or transfer
+> data without separate review and explicit approval.
+
+## Historical deployment claims (not verified)
 
 Your **Financial Risk Analysis & Hybrid Fraud Detection System** is now fully configured for production deployment on **Render** (Backend) and **Vercel** (Frontend).
 

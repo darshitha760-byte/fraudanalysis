@@ -3,9 +3,8 @@ Authentication API endpoints for login, logout, and token validation.
 """
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy.orm import Session
 from datetime import timedelta
-from app.db.database import get_db
+from app.db.database import from_bson, get_db, insert_document
 from app.core.security import hash_password, verify_password, create_access_token, get_user_id_from_token
 from app.core.config import get_settings
 from app.core.permissions import UserRole
@@ -27,11 +26,11 @@ settings = get_settings()
 @router.post("/register", response_model=MeResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: UserRegistrationRequest,
-    db: Session = Depends(get_db),
+    db = Depends(get_db),
 ):
     """Create a new viewer account through public self-registration."""
     normalized_email = str(request.email).lower()
-    existing_user = db.query(User).filter(User.email == normalized_email).first()
+    existing_user = db["users"].find_one({"email": normalized_email})
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -52,11 +51,11 @@ async def register(
         )
 
     try:
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        document = insert_document(
+            db, "users", user.model_dump(exclude={"id", "created_at", "updated_at"})
+        )
+        user = User.model_validate(document)
     except Exception:
-        db.rollback()
         logger.exception("Failed to register account")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -74,7 +73,7 @@ async def register(
 @router.post("/login", response_model=TokenResponse)
 async def login(
     request: LoginRequest,
-    db: Session = Depends(get_db)
+    db=Depends(get_db)
 ):
     """
     User login endpoint.
@@ -86,7 +85,8 @@ async def login(
     - Rate limiting should be applied at deployment
     """
     # Find user by email
-    user = db.query(User).filter(User.email == str(request.email).lower()).first()
+    document = db["users"].find_one({"email": str(request.email).lower()})
+    user = User.model_validate(from_bson(document)) if document else None
     
     # Verify user exists and password matches
     if not user or not verify_password(request.password, user.password_hash):
@@ -130,7 +130,7 @@ async def login(
 @router.get("/me", response_model=MeResponse)
 async def get_current_user(
     authorization: str = Header(default=None),
-    db: Session = Depends(get_db)
+    db=Depends(get_db)
 ):
     """
     Get current authenticated user information.
@@ -146,14 +146,14 @@ async def get_current_user(
     token = authorization.split(" ")[1]
     user_id = get_user_id_from_token(token)
     
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    document = db["users"].find_one({"id": user_id})
+    if not document:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found"
         )
     
-    return user
+    return User.model_validate(from_bson(document))
 
 
 @router.post("/logout")

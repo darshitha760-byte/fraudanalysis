@@ -1,137 +1,73 @@
 #!/usr/bin/env python
-"""Script to run database migrations using Alembic."""
+"""Initialize non-destructive MongoDB indexes for the application.
 
-import os
-import sys
+The former Alembic/MySQL migration runner has been retired. This command never
+modifies or deletes existing documents; application collection validators are
+created only for collections that do not already exist.
+"""
+
+import argparse
 import logging
-from pathlib import Path
+import sys
 
-# Add project root to path
-project_root = Path(__file__).parent.absolute()
-sys.path.insert(0, str(project_root))
+from app.db.database import check_database, get_database, initialize_database
 
-from alembic.config import Config
-from alembic import command
-from app.core.config import settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def run_migrations(revision: str = "head", direction: str = "upgrade") -> bool:
-    """
-    Run database migrations.
-    
-    Args:
-        revision: Target revision (default: "head" - latest)
-        direction: Direction of migration - "upgrade" or "downgrade"
-    
-    Returns:
-        True if successful, False otherwise
-    """
+def initialize() -> bool:
+    """Verify MongoDB connectivity and ensure application indexes exist."""
     try:
-        logger.info(f"Starting database migration to {revision}...")
-        
-        # Get Alembic config
-        alembic_cfg = Config(os.path.join(project_root, "migrations", "alembic.ini"))
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        alembic_cfg.set_main_option("script_location", os.path.join(project_root, "migrations"))
-        
-        if direction == "upgrade":
-            command.upgrade(alembic_cfg, revision)
-            logger.info(f"✅ Successfully upgraded to revision: {revision}")
-        elif direction == "downgrade":
-            command.downgrade(alembic_cfg, revision)
-            logger.info(f"✅ Successfully downgraded to revision: {revision}")
-        else:
-            logger.error(f"Invalid direction: {direction}")
-            return False
-        
+        check_database()
+        initialize_database()
+        logger.info("MongoDB connectivity verified and indexes initialized.")
         return True
-        
-    except Exception as e:
-        logger.error(f"❌ Migration failed: {str(e)}")
+    except Exception:
+        logger.exception("MongoDB initialization failed.")
         return False
 
 
-def get_migration_history() -> bool:
-    """Display migration history."""
+def show_status() -> bool:
+    """Report collection names and index names without reading document data."""
     try:
-        logger.info("Fetching migration history...")
-        
-        alembic_cfg = Config(os.path.join(project_root, "migrations", "alembic.ini"))
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        alembic_cfg.set_main_option("script_location", os.path.join(project_root, "migrations"))
-        
-        command.history(alembic_cfg)
+        check_database()
+        database = get_database()
+        for collection_name in sorted(database.list_collection_names()):
+            indexes = sorted(database[collection_name].index_information())
+            print(f"{collection_name}: {', '.join(indexes)}")
         return True
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch history: {str(e)}")
+    except Exception:
+        logger.exception("Unable to read MongoDB schema status.")
         return False
 
 
-def show_migration_status() -> bool:
-    """Show current migration status."""
-    try:
-        logger.info("Fetching migration status...")
-        
-        alembic_cfg = Config(os.path.join(project_root, "migrations", "alembic.ini"))
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        alembic_cfg.set_main_option("script_location", os.path.join(project_root, "migrations"))
-        
-        command.current(alembic_cfg)
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch status: {str(e)}")
-        return False
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Safe MongoDB schema initialization (no SQL/Alembic migrations)."
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("initialize", "current", "upgrade", "downgrade", "history"),
+        default="initialize",
+        help="initialize/current are supported; legacy Alembic commands are rejected",
+    )
+    args = parser.parse_args(argv)
+
+    if args.command == "initialize":
+        return 0 if initialize() else 1
+    if args.command == "current":
+        return 0 if show_status() else 1
+
+    print(
+        "Alembic upgrade/downgrade/history commands are retired. "
+        "Use `python run_migrations.py initialize` for non-destructive MongoDB indexes.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Database Migration Manager")
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
-    # Upgrade command
-    upgrade_parser = subparsers.add_parser("upgrade", help="Upgrade database to target revision")
-    upgrade_parser.add_argument(
-        "--revision", 
-        default="head", 
-        help="Target revision (default: head)"
-    )
-    
-    # Downgrade command
-    downgrade_parser = subparsers.add_parser("downgrade", help="Downgrade database to previous revision")
-    downgrade_parser.add_argument(
-        "revision", 
-        help="Target revision to downgrade to"
-    )
-    
-    # History command
-    subparsers.add_parser("history", help="Show migration history")
-    
-    # Current command
-    subparsers.add_parser("current", help="Show current migration status")
-    
-    args = parser.parse_args()
-    
-    if args.command == "upgrade":
-        success = run_migrations(args.revision, "upgrade")
-        sys.exit(0 if success else 1)
-    elif args.command == "downgrade":
-        success = run_migrations(args.revision, "downgrade")
-        sys.exit(0 if success else 1)
-    elif args.command == "history":
-        success = get_migration_history()
-        sys.exit(0 if success else 1)
-    elif args.command == "current":
-        success = show_migration_status()
-        sys.exit(0 if success else 1)
-    else:
-        parser.print_help()
-        sys.exit(1)
+    raise SystemExit(main())

@@ -209,6 +209,8 @@ class ModelTrainer:
         name: str,
         version: str = "1.0.0",
         scaler: Optional[StandardScaler] = None,
+        artifact_database: Any = None,
+        signing_key: str = "",
     ) -> str:
         """
         Save trained model and metadata using joblib.
@@ -222,11 +224,17 @@ class ModelTrainer:
         Returns:
             Path to saved model
         """
-        models_dir = ModelTrainer.MODELS_DIR
-        models_dir.mkdir(parents=True, exist_ok=True)
-        
         # Create version-specific filename
         stem = f"{name}_v{version}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}"
+        if artifact_database is not None:
+            from app.ml.artifact_store import save_model_artifacts
+
+            return save_model_artifacts(
+                artifact_database, model, metadata, name, stem, signing_key, scaler=scaler
+            )
+
+        models_dir = ModelTrainer.MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
         model_filename = f"{stem}.joblib"
         model_path = models_dir / model_filename
         

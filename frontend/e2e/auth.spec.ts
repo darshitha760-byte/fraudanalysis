@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { login, logout } from "./helpers";
 
 test("login errors are explicit; valid login survives reload and logout clears it", async ({ page }) => {
   await page.goto("/");
@@ -10,7 +10,7 @@ test("login errors are explicit; valid login survives reload and logout clears i
   await login(page);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Risk operations overview" })).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Welcome back." })).toBeVisible();
 });
@@ -24,7 +24,7 @@ test("viewer can use analytics but cannot enter admin pages or train", async ({ 
   await expect(page.getByRole("button", { name: "Train a model", exact: true })).toHaveCount(0);
   await page.goto("/users");
   await expect(page.getByRole("alert")).toContainText("restricted");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });
 
 test("registration persists a viewer account and permits a subsequent sign in", async ({ page }) => {
@@ -42,7 +42,7 @@ test("registration persists a viewer account and permits a subsequent sign in", 
   await expect(page.getByText("New Viewer", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("viewer account", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await logout(page);
 });
 
 test("mobile navigation fits the viewport and session expiration returns to sign in", async ({ page }) => {

@@ -11,6 +11,7 @@ from streamlit.testing.v1 import AppTest
 from app.core.permissions import UserRole
 from app.core.security import hash_password, verify_password
 from app.models import AuditLog, User
+from tests.conftest import insert_test_document
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
 from components.api_client import APIClient
@@ -25,8 +26,7 @@ def admin_headers(test_client, test_session):
         password_hash=hash_password("AdminFlowTest123"), role=UserRole.ADMIN,
         is_active=True,
     )
-    test_session.add(admin)
-    test_session.commit()
+    insert_test_document(test_session, admin)
     response = test_client.post(
         "/api/auth/login",
         json={"email": admin.email, "password": "AdminFlowTest123"},
@@ -50,13 +50,14 @@ def test_admin_creates_lists_reads_and_updates_real_account(test_client, test_se
     assert data["role"] == "analyst"
     assert data["is_active"] is True
     assert "password_hash" not in data and "password" not in data
-    user = test_session.get(User, data["id"])
-    assert verify_password("SecureAccount123", user.password_hash)
+    user = test_session["users"].find_one({"id": data["id"]})
+    assert user is not None
+    assert verify_password("SecureAccount123", user["password_hash"])
     assert test_client.get("/api/users", headers=admin_headers).status_code == 200
-    assert test_client.get(f"/api/users/{user.id}", headers=admin_headers).json()["id"] == user.id
+    assert test_client.get(f"/api/users/{user['id']}", headers=admin_headers).json()["id"] == user["id"]
     assert test_client.get("/api/users/me", headers=admin_headers).status_code == 200
     updated = test_client.put(
-        f"/api/users/{user.id}", headers=admin_headers,
+        f"/api/users/{user['id']}", headers=admin_headers,
         json={"role": "viewer", "is_active": False},
     )
     assert updated.status_code == 200, updated.text
@@ -72,7 +73,7 @@ def test_admin_creates_lists_reads_and_updates_real_account(test_client, test_se
         params={"action": "create", "target_entity": "user"},
     ).json()
     assert audit["total"] == 1
-    assert audit["items"][0]["target_id"] == str(user.id)
+    assert audit["items"][0]["target_id"] == str(user["id"])
     assert "SecureAccount123" not in str(audit)
 
 
@@ -102,8 +103,7 @@ def test_non_admins_cannot_manage_accounts_or_read_admin_audit(test_client, test
         email=f"{role.value}.flow@example.com", full_name="Non Admin",
         password_hash=hash_password("NonAdminTest123"), role=role, is_active=True,
     )
-    test_session.add(user)
-    test_session.commit()
+    insert_test_document(test_session, user)
     token = test_client.post(
         "/api/auth/login", json={"email": user.email, "password": "NonAdminTest123"}
     ).json()["access_token"]
@@ -119,16 +119,16 @@ def test_non_admins_cannot_manage_accounts_or_read_admin_audit(test_client, test
 
 
 def test_audit_filters_include_whole_end_day_and_report_counts(test_client, test_session, admin_headers):
-    actor = test_session.query(User).filter_by(email="admin.flow@example.com").one()
+    actor = test_session["users"].find_one({"email": "admin.flow@example.com"})
+    assert actor is not None
     for day in (20, 21, 22):
-        test_session.add(AuditLog(
-            actor_id=actor.id, action="create_user", action_category="user_management",
+        insert_test_document(test_session, AuditLog(
+            actor_id=actor["id"], action="create_user", action_category="user_management",
             target_type="user", target_id=f"test-{day}", action_status="success",
             action_timestamp=datetime(2026, 9, day, 23, 59, 59),
         ))
-    test_session.commit()
     params = {
-        "actor": actor.email, "action": "create", "target_entity": "user",
+        "actor": actor["email"], "action": "create", "target_entity": "user",
         "start_date": "2026-09-20", "end_date": "2026-09-21", "limit": 1,
     }
     response = test_client.get("/api/audit-logs", headers=admin_headers, params=params)
@@ -150,12 +150,12 @@ def test_audit_filters_include_whole_end_day_and_report_counts(test_client, test
 
 
 def test_login_attempts_are_persisted(test_client, test_session, admin_headers):
-    assert test_session.query(AuditLog).filter_by(action="login", action_status="success").count() == 1
+    assert test_session["audit_logs"].count_documents({"action": "login", "action_status": "success"}) == 1
     response = test_client.post(
         "/api/auth/login", json={"email": "unknown@example.com", "password": "IncorrectPass123"}
     )
     assert response.status_code == 401
-    assert test_session.query(AuditLog).filter_by(action="login", action_status="failure").count() == 1
+    assert test_session["audit_logs"].count_documents({"action": "login", "action_status": "failure"}) == 1
 
 
 def test_admin_endpoints_require_login(test_client):

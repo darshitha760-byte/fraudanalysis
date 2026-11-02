@@ -11,7 +11,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.db.database import SessionLocal
+from app.db.database import close_db, get_database
 from app.services.ml_service import MLService
 from scripts.generate_synthetic_data import SyntheticDataGenerator
 
@@ -34,7 +34,7 @@ def main():
     
     args = parser.parse_args()
     
-    session = SessionLocal()
+    database = get_database()
     
     try:
         # Generate synthetic data if requested
@@ -44,16 +44,14 @@ def main():
                 n_transactions=args.n_transactions,
                 fraud_rate=0.07
             )
-            SyntheticDataGenerator.insert_into_database(df, session)
-            session.close()
-            session = SessionLocal()
+            SyntheticDataGenerator.insert_into_database(df, database)
         
         # Train models
         logger.info("Starting model training...")
         ml_service = MLService()
         
         results = ml_service.train_models(
-            session,
+            database,
             train_logistic_regression=args.train_lr,
             train_random_forest=args.train_rf,
             train_isolation_forest=args.train_iso
@@ -99,7 +97,7 @@ def main():
         logger.error(f"Error in training pipeline: {e}", exc_info=True)
     
     finally:
-        session.close()
+        close_db()
 
 
 if __name__ == '__main__':

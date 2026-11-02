@@ -9,24 +9,20 @@ import threading
 from datetime import datetime, timedelta
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from app.db.database import get_db, get_engine
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_alert import FraudAlert
-from sqlalchemy.orm import sessionmaker, Session
+from tests.conftest import insert_test_document
 
 
 class TestConcurrentTransactionProcessing:
     """Test concurrent transaction processing."""
     
-    def test_concurrent_transaction_submissions(self, test_session, test_engine):
-        """Test handling 100 concurrent transaction submissions."""
-        
-        SessionLocal = sessionmaker(bind=test_engine)
+    def test_concurrent_transaction_submissions(self, test_session, mongo_server_only):
+        """Test handling 100 concurrent MongoDB transaction submissions."""
         
         def submit_transaction(transaction_id):
             """Submit a single transaction."""
-            session = SessionLocal()
             try:
                 transaction = Transaction(
                     transaction_id=f"TXN{transaction_id:06d}",
@@ -38,14 +34,10 @@ class TestConcurrentTransactionProcessing:
                     transaction_date=datetime.now(),
                     status="pending",
                 )
-                session.add(transaction)
-                session.commit()
+                insert_test_document(test_session, transaction)
                 return True
-            except Exception as e:
-                session.rollback()
+            except Exception:
                 return False
-            finally:
-                session.close()
         
         # Submit 100 concurrent transactions
         concurrent_count = 100
@@ -58,16 +50,15 @@ class TestConcurrentTransactionProcessing:
                 if future.result():
                     successful += 1
         
-        # All concurrent submissions should mostly succeed (>80% for in-memory SQLite)
+        # Concurrent writes should mostly succeed on the local MongoDB test server.
         assert successful >= concurrent_count * 0.80
     
-    def test_concurrent_transaction_processing_race_condition(self, test_session, test_engine):
+    def test_concurrent_transaction_processing_race_condition(
+        self, test_session, mongo_server_only
+    ):
         """Test that concurrent processing doesn't cause race conditions."""
         
-        SessionLocal = sessionmaker(bind=test_engine)
-        
         # Create a customer first
-        session = SessionLocal()
         customer = Customer(
             customer_id="CUST001",
             name="Test Customer",
@@ -75,17 +66,14 @@ class TestConcurrentTransactionProcessing:
             phone="1234567890",
             risk_profile="medium",
         )
-        session.add(customer)
-        session.commit()
+        insert_test_document(test_session, customer)
         customer_id = customer.id
-        session.close()
         
         processed_count = [0]
         lock = threading.Lock()
         
         def process_transaction(tx_id):
             """Process a single transaction."""
-            session = SessionLocal()
             try:
                 transaction = Transaction(
                     transaction_id=f"TXN{tx_id:06d}",
@@ -97,18 +85,14 @@ class TestConcurrentTransactionProcessing:
                     transaction_date=datetime.now(),
                     status="pending",
                 )
-                session.add(transaction)
-                session.commit()
+                insert_test_document(test_session, transaction)
                 
                 with lock:
                     processed_count[0] += 1
                 
                 return True
             except Exception:
-                session.rollback()
                 return False
-            finally:
-                session.close()
         
         # Process 50 concurrent transactions
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -123,26 +107,15 @@ class TestConcurrentTransactionProcessing:
 class TestDashboardConcurrentUserSimulation:
     """Test dashboard behavior with concurrent users."""
     
-    def test_concurrent_dashboard_users(self, test_session, test_engine):
+    def test_concurrent_dashboard_users(self, test_session, mongo_server_only):
         """Test dashboard handling 50 concurrent users."""
-        
-        SessionLocal = sessionmaker(bind=test_engine)
         
         def dashboard_user_request(user_id):
             """Simulate a dashboard user request."""
-            session = SessionLocal()
-            try:
-                # Simulate dashboard query (e.g., get alerts)
-                alerts = session.query(FraudAlert).limit(10).all()
-                
-                # Simulate some processing time
-                time.sleep(0.01)
-                
-                return len(alerts)
-            except Exception:
-                return 0
-            finally:
-                session.close()
+            # Simulate dashboard query (e.g., get alerts) against MongoDB.
+            alerts = list(test_session["fraud_alerts"].find().limit(10))
+            time.sleep(0.01)
+            return len(alerts)
         
         # Simulate 50 concurrent dashboard users
         concurrent_users = 50
@@ -159,13 +132,10 @@ class TestDashboardConcurrentUserSimulation:
         # All should get results (may be empty initially)
         assert all(result >= 0 for result in results)
     
-    def test_concurrent_dashboard_data_queries(self, test_session, test_engine):
+    def test_concurrent_dashboard_data_queries(self, test_session, mongo_server_only):
         """Test concurrent queries for dashboard data."""
         
-        SessionLocal = sessionmaker(bind=test_engine)
-        
         # Create test data
-        session = SessionLocal()
         for i in range(20):
             customer = Customer(
                 customer_id=f"CUST{i:03d}",
@@ -174,20 +144,11 @@ class TestDashboardConcurrentUserSimulation:
                 phone=f"123456789{i}",
                 risk_profile="medium",
             )
-            session.add(customer)
-        session.commit()
-        session.close()
+            insert_test_document(test_session, customer)
         
         def query_dashboard_stats(user_id):
             """Query dashboard statistics."""
-            session = SessionLocal()
-            try:
-                customer_count = session.query(Customer).count()
-                return customer_count
-            except Exception:
-                return 0
-            finally:
-                session.close()
+            return test_session["customers"].count_documents({})
         
         # Query statistics concurrently
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -195,33 +156,23 @@ class TestDashboardConcurrentUserSimulation:
             results = [future.result() for future in as_completed(futures)]
         
         # Most concurrent queries should return same result
-        # Relaxed for in-memory SQLite test environment
-        # Handle None results from exceptions
+        # The MongoDB server should return the full seeded customer count.
         valid_results = [r for r in results if r is not None and r >= 20]
-        # Pass if: at least 30% valid results OR at least 1 result succeeded
-        # SQLite in-memory with concurrent access is inherently unreliable
-        assert len(valid_results) >= max(len(results) * 0.3, 1)
+        assert len(valid_results) == len(results)
 
 
 class TestConnectionPoolExhaustionHandling:
     """Test connection pool behavior under load."""
     
-    def test_connection_pool_under_heavy_load(self, test_engine):
-        """Test connection pool handles heavy load."""
-        
-        SessionLocal = sessionmaker(bind=test_engine)
+    def test_connection_pool_under_heavy_load(self, mongo_server_only):
+        """Test concurrent MongoDB operations through the shared client."""
         
         def database_operation(op_id):
             """Perform a database operation."""
-            session = SessionLocal()
             try:
-                from sqlalchemy import text
-                result = session.execute(text("SELECT 1")).scalar()
-                return result
+                return mongo_server_only.command("ping").get("ok") == 1
             except Exception:
-                return None
-            finally:
-                session.close()
+                return False
         
         # Submit many concurrent operations
         operation_count = 200
@@ -231,7 +182,7 @@ class TestConnectionPoolExhaustionHandling:
             futures = [executor.submit(database_operation, i) for i in range(operation_count)]
             
             for future in as_completed(futures):
-                if future.result() is not None:
+                if future.result():
                     successful += 1
         
         # Most operations should succeed despite pool limitations
@@ -250,18 +201,17 @@ class TestAPIRateLimitingUnderLoad:
         settings = get_settings()
         
         # Rate limit configuration should exist
-        assert hasattr(settings, 'rate_limit') or hasattr(settings, 'api_rate_limit') or True
+        assert settings.rate_limit_login_attempts > 0
+        assert settings.rate_limit_window_seconds > 0
 
 
 class TestMemoryStabilityOverTime:
     """Test memory usage stability during prolonged operation."""
     
-    def test_memory_stability_during_1_hour_simulation(self, test_session, test_engine):
+    def test_memory_stability_during_1_hour_simulation(self, test_session):
         """Test memory stability over extended operation."""
         import tracemalloc
         import gc
-        
-        SessionLocal = sessionmaker(bind=test_engine)
         
         tracemalloc.start()
         
@@ -272,7 +222,6 @@ class TestMemoryStabilityOverTime:
         iteration_count = 100  # Represents load over time
         
         for i in range(iteration_count):
-            session = SessionLocal()
             try:
                 # Simulate various operations
                 transaction = Transaction(
@@ -285,8 +234,7 @@ class TestMemoryStabilityOverTime:
                     transaction_date=datetime.now(),
                     status="pending",
                 )
-                session.add(transaction)
-                session.commit()
+                insert_test_document(test_session, transaction)
                 
                 # Sample memory periodically
                 if i % 10 == 0:
@@ -294,9 +242,7 @@ class TestMemoryStabilityOverTime:
                     memory_samples.append(current / 1024 / 1024)  # MB
                     gc.collect()
             except Exception:
-                pass
-            finally:
-                session.close()
+                raise
         
         tracemalloc.stop()
         
@@ -313,14 +259,11 @@ class TestMemoryStabilityOverTime:
 class TestStressTestScenarios:
     """Test system under stress conditions."""
     
-    def test_rapid_transaction_bursts(self, test_session, test_engine):
+    def test_rapid_transaction_bursts(self, test_session, mongo_server_only):
         """Test handling rapid bursts of transactions."""
-        
-        SessionLocal = sessionmaker(bind=test_engine)
         
         def create_burst(burst_id):
             """Create a burst of transactions."""
-            session = SessionLocal()
             try:
                 for i in range(100):
                     transaction = Transaction(
@@ -333,15 +276,11 @@ class TestStressTestScenarios:
                         transaction_date=datetime.now(),
                         status="pending",
                     )
-                    session.add(transaction)
+                    insert_test_document(test_session, transaction)
                 
-                session.commit()
                 return True
             except Exception:
-                session.rollback()
                 return False
-            finally:
-                session.close()
         
         # Create 10 bursts of 100 transactions each
         burst_count = 10
@@ -354,9 +293,7 @@ class TestStressTestScenarios:
                 if future.result():
                     successful_bursts += 1
         
-        # Most bursts should complete (SQLite in-memory has serialization issues)
-        # Relaxed to 20% minimum for test environment
-        assert successful_bursts >= burst_count * 0.2 or burst_count >= 2
+        assert successful_bursts == burst_count
 
 
 # Smoke Tests
@@ -371,13 +308,9 @@ class TestSmokeTests:
         assert app is not None
         assert app.title == "Financial Risk Analysis and Hybrid Fraud Detection System"
     
-    def test_database_connectivity(self, test_engine):
-        """Test database connectivity."""
-        from sqlalchemy import text
-        
-        with test_engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            assert result.fetchone() is not None
+    def test_database_connectivity(self, test_session):
+        """Test the isolated MongoDB-compatible database ping command."""
+        assert test_session.command("ping")["ok"] == 1
     
     def test_authentication_working(self):
         """Test authentication system working."""
@@ -398,8 +331,7 @@ class TestSmokeTests:
             phone="1234567890",
             risk_profile="medium",
         )
-        test_session.add(customer)
-        test_session.commit()
+        insert_test_document(test_session, customer)
         
         # Create transaction
         transaction = Transaction(
@@ -412,11 +344,12 @@ class TestSmokeTests:
             transaction_date=datetime.now(),
             status="completed",
         )
-        test_session.add(transaction)
-        test_session.commit()
+        insert_test_document(test_session, transaction)
         
         # Should have transaction
-        assert transaction.id is not None
+        assert test_session["transactions"].find_one(
+            {"transaction_id": transaction.transaction_id}
+        )["id"] == transaction.id
     
     def test_dashboard_loads(self):
         """Test dashboard can load (basic check)."""

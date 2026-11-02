@@ -18,6 +18,7 @@ from app.db.database import get_db
 from app.ml.predict import ModelPredictor
 from app.ml.preprocessing import DataPreprocessor
 from app.ml.train import ModelTrainer
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -84,8 +85,7 @@ def test_authenticated_requests_close_their_database_dependency(tmp_path, monkey
 
     user = User(email="session-lifecycle@example.com", full_name="Session Test",
                 password_hash="unused-in-this-token-test", role="analyst", is_active=True)
-    test_session.add(user)
-    test_session.commit()
+    insert_test_document(test_session, user)
     token = create_access_token({"sub": str(user.id), "role": "analyst"})
     lifecycle = []
     def database_dependency():

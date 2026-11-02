@@ -6,7 +6,6 @@ Provides REST API for transaction risk assessment and fraud analysis.
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
 from datetime import datetime
 
 from app.db.database import get_db
@@ -118,7 +117,7 @@ class AlertStatisticsResponse(BaseModel):
 @router.post("/assess", response_model=FraudAssessmentResponse, status_code=status.HTTP_201_CREATED)
 async def assess_transaction_risk(
     request: FraudAssessmentRequest,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -185,7 +184,7 @@ async def assess_transaction_risk(
 @router.get("/assessment/{assessment_id}", response_model=AssessmentDetailsResponse)
 async def get_assessment(
     assessment_id: int,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -222,7 +221,7 @@ async def get_assessment(
 @router.get("/transaction/{transaction_id}", response_model=AssessmentDetailsResponse)
 async def get_transaction_assessment(
     transaction_id: int,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -258,7 +257,7 @@ async def get_transaction_assessment(
 
 @router.get("/alerts/pending", response_model=AlertListResponse)
 async def get_pending_alerts(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0)
@@ -296,7 +295,7 @@ async def get_pending_alerts(
 
 @router.get("/alerts", response_model=AlertListResponse)
 async def get_alerts_by_status(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user),
     status: str = Query("pending", description="Alert status filter"),
     limit: int = Query(100, ge=1, le=500),
@@ -341,7 +340,7 @@ async def get_alerts_by_status(
 @router.get("/alerts/customer/{customer_id}", response_model=AlertListResponse)
 async def get_customer_alerts(
     customer_id: int,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0)
@@ -383,7 +382,7 @@ async def get_customer_alerts(
 async def update_alert_status(
     alert_id: int,
     request: AlertStatusUpdateRequest,
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -430,7 +429,7 @@ async def update_alert_status(
 async def dismiss_alert(
     alert_id: int,
     reason: str = Query(..., description="Reason for dismissal"),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -472,7 +471,7 @@ async def approve_alert(
     alert_id: int,
     action_taken: str = Query(..., description="Action taken (blocked_card, frozen_account, etc.)"),
     notes: str = Query(None, description="Additional notes"),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -513,7 +512,7 @@ async def approve_alert(
 
 @router.get("/statistics", response_model=AlertStatisticsResponse)
 async def get_alert_statistics(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """

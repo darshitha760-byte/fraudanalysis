@@ -6,7 +6,6 @@ Tests for alert status management, analyst decisions, case creation, and audit l
 import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
-from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -23,6 +22,7 @@ from app.services.case_service import CaseService
 from app.services.audit_service import AuditService
 from app.services.transaction_service import TransactionService
 from app.db.database import get_db
+from tests.conftest import insert_test_document
 
 
 @pytest.fixture
@@ -47,10 +47,7 @@ def analyst_user(db):
         role=UserRole.ANALYST,
         is_active=True
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return insert_test_document(db, user)
 
 
 @pytest.fixture
@@ -63,10 +60,7 @@ def admin_user(db):
         role=UserRole.ADMIN,
         is_active=True
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return insert_test_document(db, user)
 
 
 @pytest.fixture
@@ -82,10 +76,7 @@ def customer(db):
         customer_type="individual",
         is_active=True
     )
-    db.add(cust)
-    db.commit()
-    db.refresh(cust)
-    return cust
+    return insert_test_document(db, cust)
 
 
 @pytest.fixture
@@ -103,10 +94,7 @@ def transaction(db, customer):
         status="completed",
         location_country="NG"
     )
-    db.add(trans)
-    db.commit()
-    db.refresh(trans)
-    return trans
+    return insert_test_document(db, trans)
 
 
 @pytest.fixture
@@ -121,10 +109,7 @@ def fraud_assessment(db, transaction):
         ml_score=Decimal("0.9200"),
         engine_version="1.0"
     )
-    db.add(assessment)
-    db.commit()
-    db.refresh(assessment)
-    return assessment
+    return insert_test_document(db, assessment)
 
 
 @pytest.fixture
@@ -140,10 +125,7 @@ def alert(db, customer, transaction, fraud_assessment):
         triggered_rules_summary="HIGH_AMOUNT, INTERNATIONAL_TRANSFER",
         alert_created_at=datetime.utcnow(),
     )
-    db.add(alert)
-    db.commit()
-    db.refresh(alert)
-    return alert
+    return insert_test_document(db, alert)
 
 
 class TestAlertStatusTransitions:
@@ -160,36 +142,30 @@ class TestAlertStatusTransitions:
             alert_reason="Test alert",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
-        db.refresh(alert)
-        
+        alert = insert_test_document(db, alert)
+
         assert alert.id is not None
         assert alert.alert_status == "pending"
         assert alert.alert_severity == "medium"
     
     def test_update_alert_to_under_review(self, db, alert, analyst_user):
         """Test marking alert as UNDER_REVIEW."""
-        alert.alert_status = "under_review"
-        alert.reviewed_by = analyst_user.id
-        alert.review_timestamp = datetime.utcnow()
-        db.commit()
-        db.refresh(alert)
-        
-        assert alert.alert_status == "under_review"
-        assert alert.reviewed_by == analyst_user.id
+        alert = AlertService.update_alert_status(
+            db, alert.id, "under_review", reviewed_by_user_id=analyst_user.id
+        )
+
+        assert alert["alert_status"] == "under_review"
+        assert alert["reviewed_by"] == analyst_user.id
     
     def test_update_alert_to_resolved(self, db, alert, analyst_user):
         """Test marking alert as RESOLVED."""
-        alert.alert_status = "resolved"
-        alert.review_decision = "approved"
-        alert.reviewed_by = analyst_user.id
-        alert.review_timestamp = datetime.utcnow()
-        db.commit()
-        db.refresh(alert)
-        
-        assert alert.alert_status == "resolved"
-        assert alert.review_decision == "approved"
+        alert = AlertService.update_alert_status(
+            db, alert.id, "resolved", reviewed_by_user_id=analyst_user.id,
+            review_decision="approved",
+        )
+
+        assert alert["alert_status"] == "resolved"
+        assert alert["review_decision"] == "approved"
 
 
 class TestAnalystDecisions:
@@ -468,8 +444,8 @@ class TestAlertFiltering:
             channel="MOBILE",
             status="completed"
         )
-        db.add_all([txn1, txn2])
-        db.flush()
+        txn1 = insert_test_document(db, txn1)
+        txn2 = insert_test_document(db, txn2)
         
         # Create fraud assessments for each transaction
         fa1 = FraudAssessment(
@@ -484,8 +460,8 @@ class TestAlertFiltering:
             risk_category="medium",
             assessment_timestamp=datetime.utcnow()
         )
-        db.add_all([fa1, fa2])
-        db.flush()
+        fa1 = insert_test_document(db, fa1)
+        fa2 = insert_test_document(db, fa2)
         
         # Create alerts with different statuses
         alert1 = FraudAlert(
@@ -510,8 +486,8 @@ class TestAlertFiltering:
             alert_created_at=datetime.utcnow(),
         )
         
-        db.add_all([alert1, alert2])
-        db.commit()
+        insert_test_document(db, alert1)
+        insert_test_document(db, alert2)
         
         pending_alerts, total = AlertService.get_alerts_by_status_paginated(
             session=db,
@@ -537,8 +513,7 @@ class TestAlertFiltering:
             channel="MOBILE",
             status="completed"
         )
-        db.add(txn)
-        db.flush()
+        txn = insert_test_document(db, txn)
         
         fa = FraudAssessment(
             transaction_id=txn.id,
@@ -546,8 +521,7 @@ class TestAlertFiltering:
             risk_category="high",
             assessment_timestamp=datetime.utcnow()
         )
-        db.add(fa)
-        db.flush()
+        fa = insert_test_document(db, fa)
         
         alert = FraudAlert(
             transaction_id=txn.id,
@@ -559,8 +533,7 @@ class TestAlertFiltering:
             triggered_rules_summary="HIGH_RISK",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
+        insert_test_document(db, alert)
         
         high_alerts, total = AlertService.get_alerts_by_priority_paginated(
             session=db,
@@ -585,8 +558,7 @@ class TestAlertFiltering:
             channel="MOBILE",
             status="completed"
         )
-        db.add(txn)
-        db.flush()
+        txn = insert_test_document(db, txn)
         
         fa = FraudAssessment(
             transaction_id=txn.id,
@@ -594,8 +566,7 @@ class TestAlertFiltering:
             risk_category="medium",
             assessment_timestamp=datetime.utcnow()
         )
-        db.add(fa)
-        db.flush()
+        fa = insert_test_document(db, fa)
         
         alert = FraudAlert(
             transaction_id=txn.id,
@@ -607,8 +578,7 @@ class TestAlertFiltering:
             triggered_rules_summary="RULE",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
+        insert_test_document(db, alert)
         
         pending, total = AlertService.get_pending_alerts_paginated(
             session=db,
@@ -633,8 +603,7 @@ class TestAlertFiltering:
             channel="MOBILE",
             status="completed"
         )
-        db.add(txn)
-        db.flush()
+        txn = insert_test_document(db, txn)
         
         fa = FraudAssessment(
             transaction_id=txn.id,
@@ -642,8 +611,7 @@ class TestAlertFiltering:
             risk_category="medium",
             assessment_timestamp=datetime.utcnow()
         )
-        db.add(fa)
-        db.flush()
+        fa = insert_test_document(db, fa)
         
         alert = FraudAlert(
             transaction_id=txn.id,
@@ -655,8 +623,7 @@ class TestAlertFiltering:
             triggered_rules_summary="PATTERN_MATCH",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
+        insert_test_document(db, alert)
         
         results, total = AlertService.search_alerts_paginated(
             session=db,
@@ -681,8 +648,7 @@ class TestAlertFiltering:
             channel="MOBILE",
             status="completed"
         )
-        db.add(txn)
-        db.flush()
+        txn = insert_test_document(db, txn)
         
         fa = FraudAssessment(
             transaction_id=txn.id,
@@ -690,8 +656,7 @@ class TestAlertFiltering:
             risk_category="high",
             assessment_timestamp=datetime.utcnow()
         )
-        db.add(fa)
-        db.flush()
+        fa = insert_test_document(db, fa)
         
         alert = FraudAlert(
             transaction_id=txn.id,
@@ -703,8 +668,7 @@ class TestAlertFiltering:
             triggered_rules_summary="FILTER_TEST",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
+        insert_test_document(db, alert)
         
         results, total = AlertService.search_alerts_paginated(
             session=db,
@@ -735,8 +699,7 @@ class TestAlertStatistics:
                 channel="MOBILE",
                 status="completed"
             )
-            db.add(txn)
-            db.flush()
+            txn = insert_test_document(db, txn)
             
             fa = FraudAssessment(
                 transaction_id=txn.id,
@@ -744,8 +707,7 @@ class TestAlertStatistics:
                 risk_category="medium" if i % 2 == 0 else "high",
                 assessment_timestamp=datetime.utcnow()
             )
-            db.add(fa)
-            db.flush()
+            fa = insert_test_document(db, fa)
             
             alert = FraudAlert(
                 transaction_id=txn.id,
@@ -757,8 +719,7 @@ class TestAlertStatistics:
                 triggered_rules_summary=f"RULE{i}",
                 alert_created_at=datetime.utcnow(),
             )
-            db.add(alert)
-        db.commit()
+            insert_test_document(db, alert)
         
         stats = AlertService.get_alert_statistics(session=db)
         
@@ -851,8 +812,7 @@ class TestPaginationAndPerformance:
                 merchant_name=f"Test Merchant {i}",
                 transaction_date=datetime.utcnow() - timedelta(seconds=i),
             )
-            db.add(txn)
-            db.flush()
+            txn = insert_test_document(db, txn)
             
             # Create fraud assessment for this transaction
             fa = FraudAssessment(
@@ -861,8 +821,7 @@ class TestPaginationAndPerformance:
                 risk_category="medium",
                 rules_triggered_count=2
             )
-            db.add(fa)
-            db.flush()
+            fa = insert_test_document(db, fa)
             
             alert = FraudAlert(
                 transaction_id=txn.id,
@@ -874,8 +833,7 @@ class TestPaginationAndPerformance:
                 triggered_rules_summary=f"RULE{i}",
                 alert_created_at=datetime.utcnow() - timedelta(seconds=i),
             )
-            db.add(alert)
-        db.commit()
+            insert_test_document(db, alert)
         
         alerts1, total1 = AlertService.get_pending_alerts_paginated(
             session=db,
@@ -908,8 +866,7 @@ class TestPaginationAndPerformance:
                 merchant_name=f"Offset Merchant {i}",
                 transaction_date=datetime.utcnow() - timedelta(seconds=i),
             )
-            db.add(txn)
-            db.flush()
+            txn = insert_test_document(db, txn)
             
             # Create fraud assessment for this transaction
             fa = FraudAssessment(
@@ -918,8 +875,7 @@ class TestPaginationAndPerformance:
                 risk_category="high",
                 rules_triggered_count=3
             )
-            db.add(fa)
-            db.flush()
+            fa = insert_test_document(db, fa)
             
             alert = FraudAlert(
                 transaction_id=txn.id,
@@ -931,8 +887,7 @@ class TestPaginationAndPerformance:
                 triggered_rules_summary="TEST",
                 alert_created_at=datetime.utcnow() - timedelta(seconds=i),
             )
-            db.add(alert)
-        db.commit()
+            insert_test_document(db, alert)
         
         alerts, total = AlertService.get_pending_alerts_paginated(
             session=db,
@@ -968,14 +923,11 @@ class TestErrorHandling:
             )
     
     def test_invalid_status_transition(self, db, alert):
-        """Test invalid alert status."""
-        alert.alert_status = "INVALID_STATUS"
-        # Should not raise during save, but could fail on query
-        db.commit()
-        
-        # Status is stored regardless
-        db.refresh(alert)
-        assert alert.alert_status == "INVALID_STATUS"
+        """Reject invalid lifecycle transitions without changing stored status."""
+        with pytest.raises(ValueError):
+            AlertService.update_alert_status(db, alert.id, "invalid_status")
+        stored = db["fraud_alerts"].find_one({"id": alert.id})
+        assert stored["alert_status"] == "pending"
 
 
 class TestIntegrationWithPhase5:
@@ -995,9 +947,7 @@ class TestIntegrationWithPhase5:
             triggered_rules_summary="TEST_RULE",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
-        db.refresh(alert)
+        alert = insert_test_document(db, alert)
         
         # Verify link to transaction
         assert alert.transaction_id == transaction.id
@@ -1015,14 +965,12 @@ class TestIntegrationWithPhase5:
             triggered_rules_summary="RULE1",
             alert_created_at=datetime.utcnow(),
         )
-        db.add(alert)
-        db.commit()
-        db.refresh(alert)
+        alert = insert_test_document(db, alert)
         
         # Mark alert as under review
-        alert.alert_status = "under_review"
-        alert.reviewed_by = analyst_user.id
-        db.commit()
+        AlertService.update_alert_status(
+            db, alert.id, "under_review", reviewed_by_user_id=analyst_user.id
+        )
         
         # Record decision
         AlertService.record_analyst_decision(
@@ -1043,4 +991,3 @@ class TestIntegrationWithPhase5:
         
         assert case_data is not None
         assert case_data["alert_id"] == alert.id
-

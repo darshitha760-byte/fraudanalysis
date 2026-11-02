@@ -4,7 +4,6 @@ Provides comprehensive analytics for transaction, alert, and risk data.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -161,7 +160,7 @@ async def analytics_health():
 
 @router.get("/dashboard", response_model=AnalyticsOverviewResponse)
 def get_dashboard_overview(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -188,7 +187,7 @@ def get_dashboard_overview(
 def get_transactions(
     days: int = Query(30, ge=1, le=365),
     customer_id: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -214,7 +213,7 @@ def get_transactions(
 @router.get("/trends", response_model=List[DailyTrendResponse])
 async def get_trends(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -239,7 +238,7 @@ async def get_trends(
 @router.get("/alerts", response_model=AlertStatsResponse)
 async def get_alerts(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -264,7 +263,7 @@ async def get_alerts(
 @router.get("/customers")
 def get_customers(
     limit: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -291,7 +290,7 @@ def get_customers(
 
 @router.get("/anomalies", response_model=List[AnomalyResponse])
 async def get_anomalies(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -316,7 +315,7 @@ async def get_anomalies(
 
 @router.get("/fraud-rate")
 async def get_fraud_rate(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -349,7 +348,7 @@ async def get_fraud_rate(
 
 @router.get("/performance")
 async def get_performance(
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -386,7 +385,7 @@ async def get_performance(
 async def export_analytics(
     format: str = Query("json", regex="^(json|csv)$"),
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -426,7 +425,7 @@ async def export_analytics(
 @router.get("/merchant-categories")
 async def get_merchant_categories(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -448,7 +447,7 @@ async def get_merchant_categories(
 @router.get("/transaction-types")
 async def get_transaction_types(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -470,7 +469,7 @@ async def get_transaction_types(
 @router.get("/payment-methods")
 async def get_payment_methods(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -492,7 +491,7 @@ async def get_payment_methods(
 @router.get("/geographic")
 async def get_geographic_data(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -514,7 +513,7 @@ async def get_geographic_data(
 @router.get("/channel-analysis")
 async def get_channel_analysis(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """
@@ -536,7 +535,7 @@ async def get_channel_analysis(
 @router.get("/risk-distribution")
 async def get_risk_distribution(
     days: int = Query(30, ge=1, le=365),
-    db: Session = Depends(get_db),
+    db=Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """

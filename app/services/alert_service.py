@@ -1,772 +1,268 @@
-"""
-Alert Service - Manages creation and updates of fraud alerts.
-Handles alert lifecycle from creation to resolution.
-"""
+"""MongoDB document service for fraud-alert lifecycle and analyst workflows."""
 
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, desc
+import re
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from app.models.fraud_alert import FraudAlert, FraudAssessment
-from app.models.transaction import Transaction
-from app.models.user import User
+from pymongo.database import Database
+
+from app.db.database import from_bson, insert_document, to_bson
+from app.models.fraud_alert import FraudAlert
 
 logger = logging.getLogger(__name__)
 
 
 class AlertService:
-    """
-    Manages fraud alert lifecycle.
-    
-    Alert lifecycle:
-    1. PENDING - Created after assessment
-    2. UNDER_REVIEW - Analyst is reviewing
-    3. RESOLVED - Final decision made (approved/rejected/escalated)
-    """
-    
-    # Priority mapping based on risk score
-    PRIORITY_MAPPING = {
-        "HIGH": (71, 100),    # risk_score > 70
-        "MEDIUM": (31, 70),   # risk_score 31-70
-        "LOW": (0, 30),       # risk_score < 30
-    }
-    
-    # Alert type mapping
+    PRIORITY_MAPPING = {"HIGH": (71, 100), "MEDIUM": (31, 70), "LOW": (0, 30)}
     ALERT_TYPE_MAPPING = {
         "rule_triggered": "RULE_TRIGGERED",
         "ml_predicted": "ML_PREDICTED",
         "combined": "COMBINED",
     }
-    
-    # Valid status transitions
     VALID_TRANSITIONS = {
-        "pending": ["under_review", "dismissed"],
-        "under_review": ["resolved", "dismissed"],
+        "pending": ["under_review", "resolved", "dismissed"],
+        "under_review": ["resolved", "dismissed", "pending"],
         "resolved": [],
         "dismissed": [],
     }
-    
+
     @staticmethod
     def create_fraud_alert(
-        session: Session,
-        transaction_id: int,
-        customer_id: int,
-        assessment_id: int,
-        risk_score: float,
-        risk_level: str,
-        alert_reason: str,
-        triggered_rules_summary: Optional[str] = None
+        session: Database, transaction_id: int, customer_id: int,
+        assessment_id: int, risk_score: float, risk_level: str,
+        alert_reason: str, triggered_rules_summary: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Create a new fraud alert.
-        
-        Args:
-            session: Database session
-            transaction_id: Transaction ID (database primary key)
-            customer_id: Customer ID
-            assessment_id: Associated FraudAssessment ID
-            risk_score: Risk score (0-100)
-            risk_level: Risk level (LOW/MEDIUM/HIGH)
-            alert_reason: Reason for alert creation
-            triggered_rules_summary: Summary of triggered rules (optional)
-        
-        Returns:
-            Dictionary with alert details
-        
-        Raises:
-            ValueError: If assessment or transaction not found
-        """
-        try:
-            # Verify assessment exists
-            assessment = session.query(FraudAssessment).filter(
-                FraudAssessment.id == assessment_id
-            ).first()
-            
-            if not assessment:
-                raise ValueError(f"Assessment {assessment_id} not found")
-            
-            # Verify transaction exists
-            transaction = session.query(Transaction).filter(
-                Transaction.id == transaction_id
-            ).first()
-            
-            if not transaction:
-                raise ValueError(f"Transaction {transaction_id} not found")
-            
-            # Determine severity based on risk score
-            if risk_score >= 71:
-                severity = "high"
-            elif risk_score >= 31:
-                severity = "medium"
-            else:
-                severity = "low"
-            
-            # Create alert
-            alert = FraudAlert(
-                transaction_id=transaction_id,
-                customer_id=customer_id,
-                assessment_id=assessment_id,
-                alert_severity=severity,
-                alert_status="pending",
-                alert_reason=alert_reason,
-                triggered_rules_summary=triggered_rules_summary,
-                alert_created_at=datetime.utcnow(),
-            )
-            
-            session.add(alert)
-            session.commit()
-            
-            logger.info(
-                f"Created fraud alert: transaction={transaction_id}, "
-                f"assessment={assessment_id}, severity={severity}"
-            )
-            
-            return AlertService._format_alert_response(alert)
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error creating fraud alert: {e}", exc_info=True)
-            raise
-    
+        if not session["fraud_assessments"].find_one({"id": assessment_id}):
+            raise ValueError(f"Assessment {assessment_id} not found")
+        if not session["transactions"].find_one({"id": transaction_id}):
+            raise ValueError(f"Transaction {transaction_id} not found")
+        severity = "high" if risk_score >= 71 else "medium" if risk_score >= 31 else "low"
+        document = insert_document(session, "fraud_alerts", {
+            "transaction_id": transaction_id,
+            "customer_id": customer_id,
+            "assessment_id": assessment_id,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "alert_severity": severity,
+            "alert_status": "pending",
+            "alert_reason": alert_reason,
+            "triggered_rules_summary": triggered_rules_summary,
+            "alert_created_at": datetime.now(timezone.utc),
+        })
+        return AlertService._format_alert_response(FraudAlert.model_validate(document))
+
     @staticmethod
-    def get_alert(session: Session, alert_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve an alert by ID.
-        
-        Args:
-            session: Database session
-            alert_id: Alert ID
-        
-        Returns:
-            Alert details or None if not found
-        """
-        alert = session.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
-        
-        if not alert:
-            return None
-        
-        return AlertService._format_alert_response(alert)
-    
+    def _find(session: Database, alert_id: int) -> Optional[FraudAlert]:
+        document = session["fraud_alerts"].find_one({"id": alert_id})
+        return FraudAlert.model_validate(from_bson(document)) if document else None
+
     @staticmethod
-    def get_pending_alerts(
-        session: Session,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Get all pending alerts (not yet resolved).
-        
-        Args:
-            session: Database session
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_status == "pending"
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+    def get_alert(session: Database, alert_id: int) -> Optional[Dict[str, Any]]:
+        alert = AlertService._find(session, alert_id)
+        return AlertService._format_alert_response(alert) if alert else None
+
     @staticmethod
-    def get_alerts_by_status(
-        session: Session,
-        status: str,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Get alerts filtered by status.
-        
-        Args:
-            session: Database session
-            status: Alert status (pending, under_review, resolved, dismissed)
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        valid_statuses = ["pending", "under_review", "resolved", "dismissed"]
-        if status not in valid_statuses:
-            raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
-        
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_status == status
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+    def _list(session: Database, query: dict, limit: int, offset: int,
+              sort_field: str = "alert_created_at"):
+        collection = session["fraud_alerts"]
+        total = collection.count_documents(query)
+        cursor = collection.find(query).sort(sort_field, -1).skip(offset).limit(limit)
+        return ([AlertService._format_alert_response(FraudAlert.model_validate(from_bson(doc)))
+                 for doc in cursor], total)
+
     @staticmethod
-    def get_alerts_by_customer(
-        session: Session,
-        customer_id: int,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Get alerts for a specific customer.
-        
-        Args:
-            session: Database session
-            customer_id: Customer ID
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        query = session.query(FraudAlert).filter(
-            FraudAlert.customer_id == customer_id
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
+    def get_pending_alerts(session: Database, limit: int = 100, offset: int = 0):
+        return AlertService._list(
+            session, {"alert_status": {"$regex": "^pending$", "$options": "i"}}, limit, offset
         )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
+
+    @staticmethod
+    def get_alerts_by_status(session: Database, status: str, limit: int = 100, offset: int = 0):
+        allowed = ("pending", "under_review", "resolved", "dismissed")
+        status = status.lower()
+        if status not in allowed:
+            raise ValueError(f"Invalid status: {status}. Must be one of {list(allowed)}")
+        return AlertService._list(
+            session, {"alert_status": {"$regex": f"^{re.escape(status)}$", "$options": "i"}},
+            limit, offset,
         )
-    
+
+    @staticmethod
+    def get_alerts_by_customer(session: Database, customer_id: int, limit: int = 100, offset: int = 0):
+        return AlertService._list(session, {"customer_id": customer_id}, limit, offset)
+
     @staticmethod
     def update_alert_status(
-        session: Session,
-        alert_id: int,
-        new_status: str,
+        session: Database, alert_id: int, new_status: str,
         reviewed_by_user_id: Optional[int] = None,
-        review_decision: Optional[str] = None,
-        review_notes: Optional[str] = None
+        review_decision: Optional[str] = None, review_notes: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Update alert status and review information.
-        
-        Args:
-            session: Database session
-            alert_id: Alert ID
-            new_status: New status (pending, under_review, resolved, dismissed)
-            reviewed_by_user_id: User ID of reviewer (optional)
-            review_decision: Review decision (approved, rejected, escalated, etc.)
-            review_notes: Additional review notes
-        
-        Returns:
-            Updated alert details
-        
-        Raises:
-            ValueError: If alert not found or invalid status transition
-        """
-        try:
-            alert = session.query(FraudAlert).filter(
-                FraudAlert.id == alert_id
-            ).first()
-            
-            if not alert:
-                raise ValueError(f"Alert {alert_id} not found")
-            
-            # Validate status transition
-            valid_next_statuses = AlertService.VALID_TRANSITIONS.get(
-                alert.alert_status, []
-            )
-            if new_status not in valid_next_statuses:
-                raise ValueError(
-                    f"Invalid status transition from {alert.alert_status} to {new_status}. "
-                    f"Valid transitions: {valid_next_statuses}"
-                )
-            
-            # Update status and review info
-            alert.alert_status = new_status
-            
-            if review_decision:
-                alert.review_decision = review_decision
-            
-            if review_notes:
-                alert.review_notes = review_notes
-            
-            if reviewed_by_user_id:
-                alert.reviewed_by = reviewed_by_user_id
-                alert.review_timestamp = datetime.utcnow()
-            
-            session.commit()
-            
-            logger.info(
-                f"Updated alert {alert_id}: status={new_status}, "
-                f"decision={review_decision}, reviewed_by={reviewed_by_user_id}"
-            )
-            
-            return AlertService._format_alert_response(alert)
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error updating alert status: {e}", exc_info=True)
-            raise
-    
-    @staticmethod
-    def dismiss_alert(
-        session: Session,
-        alert_id: int,
-        reviewed_by_user_id: int,
-        reason: str
-    ) -> Dict[str, Any]:
-        """
-        Dismiss an alert (false positive).
-        
-        Args:
-            session: Database session
-            alert_id: Alert ID
-            reviewed_by_user_id: User ID of reviewer
-            reason: Reason for dismissal
-        
-        Returns:
-            Updated alert details
-        """
-        return AlertService.update_alert_status(
-            session=session,
-            alert_id=alert_id,
-            new_status="dismissed",
-            reviewed_by_user_id=reviewed_by_user_id,
-            review_decision="dismissed",
-            review_notes=reason
-        )
-    
-    @staticmethod
-    def approve_alert(
-        session: Session,
-        alert_id: int,
-        reviewed_by_user_id: int,
-        action_taken: str,
-        notes: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Approve an alert and mark as resolved.
-        
-        Args:
-            session: Database session
-            alert_id: Alert ID
-            reviewed_by_user_id: User ID of reviewer
-            action_taken: Action taken (blocked_card, frozen_account, contacted_customer, etc.)
-            notes: Additional notes
-        
-        Returns:
-            Updated alert details
-        """
-        return AlertService.update_alert_status(
-            session=session,
-            alert_id=alert_id,
-            new_status="resolved",
-            reviewed_by_user_id=reviewed_by_user_id,
-            review_decision="approved",
-            review_notes=f"Action: {action_taken}. {notes or ''}"
-        )
-    
-    @staticmethod
-    def _format_alert_response(alert: FraudAlert) -> Dict[str, Any]:
-        """Format alert model to response dictionary."""
-        # Get assessment data for risk score and level
-        assessment_data = {
-            "risk_score": 0.0,
-            "risk_level": "low",
-            "ml_score": None
-        }
-        
-        if alert.assessment:
-            assessment_data["risk_score"] = float(alert.assessment.risk_score) if alert.assessment.risk_score else 0.0
-            assessment_data["risk_level"] = alert.assessment.risk_category if alert.assessment.risk_category else "low"
-            assessment_data["ml_score"] = float(alert.assessment.ml_score) if alert.assessment.ml_score else None
-        
-        return {
-            "alert_id": alert.id,
-            "transaction_id": alert.transaction_id,
-            "customer_id": alert.customer_id,
-            "assessment_id": alert.assessment_id,
-            "risk_score": assessment_data["risk_score"],
-            "risk_level": assessment_data["risk_level"],
-            "ml_score": assessment_data["ml_score"],
-            "alert_severity": alert.alert_severity,
-            "alert_status": alert.alert_status,
-            "alert_reason": alert.alert_reason,
-            "triggered_rules_summary": alert.triggered_rules_summary,
-            "reviewed_by": alert.reviewed_by,
-            "review_timestamp": alert.review_timestamp,
-            "review_decision": alert.review_decision,
-            "review_notes": alert.review_notes,
-            "alert_created_at": alert.alert_created_at,
-            "created_at": alert.alert_created_at,  # For API compatibility
-            "alert_resolved_at": alert.alert_resolved_at if hasattr(alert, "alert_resolved_at") else None,
-        }
-    
-    @staticmethod
-    def get_alert_statistics(session: Session) -> Dict[str, Any]:
-        """
-        Get alert statistics for dashboard.
-        
-        Args:
-            session: Database session
-        
-        Returns:
-            Dictionary with alert statistics
-        """
-        total_alerts = session.query(FraudAlert).count()
-        
-        status_counts = {}
-        for status in ["pending", "under_review", "resolved", "dismissed"]:
-            count = session.query(FraudAlert).filter(
-                FraudAlert.alert_status == status
-            ).count()
-            status_counts[status] = count
-        
-        severity_counts = {}
-        for severity in ["low", "medium", "high"]:
-            count = session.query(FraudAlert).filter(
-                FraudAlert.alert_severity == severity
-            ).count()
-            severity_counts[severity] = count
-        
-        return {
-            "total_alerts": total_alerts,
-            "status_counts": status_counts,
-            "severity_counts": severity_counts,
-        }
-    
-    @staticmethod
-    def record_analyst_decision(
-        session: Session,
-        alert_id: int,
-        decision: str,
-        justification: str,
-        analyst_id: int
-    ) -> Dict[str, Any]:
-        """
-        Record analyst's decision on an alert.
-        
-        Args:
-            session: Database session
-            alert_id: Alert ID
-            decision: APPROVED (fraud confirmed), REJECTED (not fraud), NEEDS_REVIEW
-            justification: Detailed reasoning for decision
-            analyst_id: Analyst user ID
-        
-        Returns:
-            Updated alert with decision
-        
-        Raises:
-            ValueError: If alert not found or invalid decision
-        """
-        valid_decisions = ["APPROVED", "REJECTED", "NEEDS_REVIEW"]
-        if decision not in valid_decisions:
-            raise ValueError(f"Invalid decision: {decision}. Must be one of {valid_decisions}")
-        
-        alert = session.query(FraudAlert).filter(
-            FraudAlert.id == alert_id
-        ).first()
-        
+        alert = AlertService._find(session, alert_id)
         if not alert:
             raise ValueError(f"Alert {alert_id} not found")
-        
-        try:
-            # Update alert with decision
-            if decision == "APPROVED":
-                alert.review_decision = "approved"
-                alert.alert_status = "resolved"
-            elif decision == "REJECTED":
-                alert.review_decision = "rejected"
-                alert.alert_status = "resolved"
-            elif decision == "NEEDS_REVIEW":
-                alert.review_decision = "needs_review"
-                alert.alert_status = "under_review"
-            
-            alert.review_notes = justification
-            alert.reviewed_by = analyst_id
-            alert.review_timestamp = datetime.utcnow()
-            
-            session.commit()
-            
-            logger.info(
-                f"Analyst {analyst_id} recorded {decision} decision on alert {alert_id}"
+        current_status = alert.alert_status.lower()
+        new_status = new_status.lower()
+        allowed = AlertService.VALID_TRANSITIONS.get(current_status, [])
+        if new_status not in allowed:
+            raise ValueError(
+                f"Invalid status transition from {alert.alert_status} to {new_status}. "
+                f"Valid transitions: {allowed}"
             )
-            
-            return AlertService._format_alert_response(alert)
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error recording analyst decision: {e}", exc_info=True)
-            raise
-    
+        now = datetime.now(timezone.utc)
+        changes = {"alert_status": new_status, "updated_at": now}
+        if review_decision is not None:
+            changes["review_decision"] = review_decision
+        if review_notes is not None:
+            changes["review_notes"] = review_notes
+        if reviewed_by_user_id is not None:
+            changes["reviewed_by"] = reviewed_by_user_id
+            changes["review_timestamp"] = now
+        if new_status in ("resolved", "dismissed"):
+            changes["alert_resolved_at"] = now
+        result = session["fraud_alerts"].update_one(
+            {"id": alert_id, "alert_status": alert.alert_status},
+            {"$set": to_bson(changes)},
+        )
+        if result.modified_count != 1:
+            raise ValueError(f"Alert {alert_id} changed during update")
+        return AlertService.get_alert(session, alert_id)
+
     @staticmethod
-    def get_alerts_by_priority(
-        session: Session,
-        priority: str,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Get alerts filtered by priority (severity).
-        
-        Args:
-            session: Database session
-            priority: Alert priority/severity (low, medium, high)
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        valid_priorities = ["low", "medium", "high"]
-        if priority not in valid_priorities:
+    def dismiss_alert(session, alert_id, reviewed_by_user_id, reason):
+        return AlertService.update_alert_status(
+            session, alert_id, "dismissed", reviewed_by_user_id, "dismissed", reason
+        )
+
+    @staticmethod
+    def approve_alert(session, alert_id, reviewed_by_user_id, action_taken, notes=None):
+        return AlertService.update_alert_status(
+            session, alert_id, "resolved", reviewed_by_user_id, "approved",
+            f"Action: {action_taken}. {notes or ''}",
+        )
+
+    @staticmethod
+    def _format_alert_response(alert) -> Dict[str, Any]:
+        data = alert.model_dump() if isinstance(alert, FraudAlert) else from_bson(alert)
+        score = data.get("risk_score")
+        return {
+            "alert_id": data.get("id"),
+            "transaction_id": data.get("transaction_id"),
+            "customer_id": data.get("customer_id"),
+            "assessment_id": data.get("assessment_id"),
+            "risk_score": float(score) if score is not None else 0.0,
+            "risk_level": data.get("risk_level") or "low",
+            "ml_score": float(data["ml_score"]) if data.get("ml_score") is not None else None,
+            "alert_severity": data.get("alert_severity", "low"),
+            "alert_status": data.get("alert_status", "pending"),
+            "alert_reason": data.get("alert_reason", ""),
+            "triggered_rules_summary": data.get("triggered_rules_summary"),
+            "reviewed_by": data.get("reviewed_by"),
+            "review_timestamp": data.get("review_timestamp"),
+            "review_decision": data.get("review_decision"),
+            "review_notes": data.get("review_notes"),
+            "alert_created_at": data.get("alert_created_at") or data.get("created_at"),
+            "created_at": data.get("alert_created_at") or data.get("created_at"),
+            "alert_resolved_at": data.get("alert_resolved_at"),
+        }
+
+    @staticmethod
+    def get_alert_statistics(session: Database) -> Dict[str, Any]:
+        collection = session["fraud_alerts"]
+        statuses = ("pending", "under_review", "resolved", "dismissed")
+        severities = ("low", "medium", "high")
+        return {
+            "total_alerts": collection.count_documents({}),
+            "status_counts": {value: collection.count_documents({
+                                  "alert_status": {"$regex": f"^{value}$", "$options": "i"}})
+                              for value in statuses},
+            "severity_counts": {value: collection.count_documents({
+                                    "alert_severity": {"$regex": f"^{value}$", "$options": "i"}})
+                                for value in severities},
+        }
+
+    @staticmethod
+    def record_analyst_decision(session, alert_id, decision, justification, analyst_id):
+        if decision not in ("APPROVED", "REJECTED", "NEEDS_REVIEW"):
+            raise ValueError(f"Invalid decision: {decision}")
+        alert = AlertService._find(session, alert_id)
+        if not alert:
+            raise ValueError(f"Alert {alert_id} not found")
+        status_value = "under_review" if decision == "NEEDS_REVIEW" else "resolved"
+        now = datetime.now(timezone.utc)
+        session["fraud_alerts"].update_one({"id": alert_id}, {"$set": {
+            "review_decision": decision.lower(),
+            "alert_status": status_value,
+            "review_notes": justification,
+            "reviewed_by": analyst_id,
+            "review_timestamp": now,
+            "alert_resolved_at": now if status_value == "resolved" else None,
+            "updated_at": now,
+        }})
+        return AlertService.get_alert(session, alert_id)
+
+    @staticmethod
+    def get_alerts_by_priority(session, priority, limit=100, offset=0):
+        priority = priority.lower()
+        if priority not in ("low", "medium", "high"):
             raise ValueError(f"Invalid priority: {priority}")
-        
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_severity == priority
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+        return AlertService._list(session, {"alert_severity": priority}, limit, offset)
+
     @staticmethod
-    def get_analyst_alerts(
-        session: Session,
-        analyst_id: int,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Get alerts reviewed by a specific analyst.
-        
-        Args:
-            session: Database session
-            analyst_id: Analyst user ID
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        query = session.query(FraudAlert).filter(
-            FraudAlert.reviewed_by == analyst_id
-        ).order_by(
-            desc(FraudAlert.review_timestamp)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+    def get_analyst_alerts(session, analyst_id, limit=100, offset=0):
+        return AlertService._list(session, {"reviewed_by": analyst_id}, limit, offset, "review_timestamp")
+
     @staticmethod
-    def search_alerts(
-        session: Session,
-        query_text: str,
-        filters: Optional[Dict[str, Any]] = None,
-        limit: int = 100,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """
-        Search alerts by reason/notes with optional filters.
-        
-        Args:
-            session: Database session
-            query_text: Search query text
-            filters: Dictionary of filters (status, severity, analyst_id, etc.)
-            limit: Maximum number of results
-            offset: Pagination offset
-        
-        Returns:
-            Tuple of (alerts list, total count)
-        """
-        query = session.query(FraudAlert)
-        
-        # Text search
+    def search_alerts(session, query_text, filters=None, limit=100, offset=0):
+        query = AlertService._search_query(query_text, filters)
+        return AlertService._list(session, query, limit, offset)
+
+    @staticmethod
+    def _search_query(query_text, filters=None):
+        query = {}
         if query_text:
-            search_pattern = f"%{query_text}%"
-            query = query.filter(
-                and_(
-                    FraudAlert.alert_reason.ilike(search_pattern) |
-                    FraudAlert.review_notes.ilike(search_pattern)
-                )
-            )
-        
-        # Apply filters
-        filters = filters or {}
-        if "status" in filters:
-            query = query.filter(FraudAlert.alert_status == filters["status"])
-        if "severity" in filters:
-            query = query.filter(FraudAlert.alert_severity == filters["severity"])
-        if "analyst_id" in filters:
-            query = query.filter(FraudAlert.reviewed_by == filters["analyst_id"])
-        if "customer_id" in filters:
-            query = query.filter(FraudAlert.customer_id == filters["customer_id"])
-        
-        query = query.order_by(desc(FraudAlert.alert_created_at))
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
-    # ===== PAGINATED VERSIONS FOR API =====
-    
+            pattern = {"$regex": re.escape(query_text), "$options": "i"}
+            query["$or"] = [{"alert_reason": pattern}, {"review_notes": pattern}]
+        for key, field in (("status", "alert_status"), ("severity", "alert_severity"),
+                           ("analyst_id", "reviewed_by"), ("customer_id", "customer_id"),
+                           ("priority", "alert_severity")):
+            value = (filters or {}).get(key)
+            if value is not None:
+                query[field] = ({"$regex": f"^{re.escape(str(value))}$", "$options": "i"}
+                                if key in {"status", "severity", "priority"} else value)
+        bounds = {}
+        if (filters or {}).get("min_risk_score") is not None:
+            bounds["$gte"] = to_bson((filters or {})["min_risk_score"])
+        if (filters or {}).get("max_risk_score") is not None:
+            bounds["$lte"] = to_bson((filters or {})["max_risk_score"])
+        if bounds:
+            query["risk_score"] = bounds
+        return query
+
     @staticmethod
-    def get_pending_alerts_paginated(
-        session: Session,
-        limit: int = 50,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Get pending alerts with pagination."""
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_status == "pending"
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+    def get_pending_alerts_paginated(session, limit=50, offset=0):
+        return AlertService.get_pending_alerts(session, limit, offset)
+
     @staticmethod
-    def get_analyst_alerts_paginated(
-        session: Session,
-        analyst_id: int,
-        limit: int = 50,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Get alerts assigned to analyst with pagination."""
-        query = session.query(FraudAlert).filter(
-            FraudAlert.reviewed_by == analyst_id
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
-        )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+    def get_analyst_alerts_paginated(session, analyst_id, limit=50, offset=0):
+        return AlertService.get_analyst_alerts(session, analyst_id, limit, offset)
+
     @staticmethod
-    def get_alerts_by_status_paginated(
-        session: Session,
-        status: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Get alerts by status with pagination."""
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_status == status
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
+    def get_alerts_by_status_paginated(session, status, limit=50, offset=0):
+        return AlertService._list(
+            session, {"alert_status": {"$regex": f"^{re.escape(status)}$", "$options": "i"}},
+            limit, offset,
         )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+
     @staticmethod
-    def get_alerts_by_priority_paginated(
-        session: Session,
-        priority: str,
-        limit: int = 50,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Get alerts by priority with pagination."""
-        query = session.query(FraudAlert).filter(
-            FraudAlert.alert_severity == priority.lower()
-        ).order_by(
-            desc(FraudAlert.alert_created_at)
+    def get_alerts_by_priority_paginated(session, priority, limit=50, offset=0):
+        return AlertService._list(
+            session, {"alert_severity": {"$regex": f"^{re.escape(priority)}$", "$options": "i"}},
+            limit, offset,
         )
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
-        )
-    
+
     @staticmethod
-    def search_alerts_paginated(
-        session: Session,
-        query_text: Optional[str] = None,
-        filters: Optional[Dict[str, Any]] = None,
-        limit: int = 50,
-        offset: int = 0
-    ) -> tuple[List[Dict[str, Any]], int]:
-        """Search alerts with pagination."""
-        query = session.query(FraudAlert)
-        
-        # Text search
-        if query_text:
-            search_pattern = f"%{query_text}%"
-            query = query.filter(
-                and_(
-                    FraudAlert.alert_reason.ilike(search_pattern) |
-                    FraudAlert.review_notes.ilike(search_pattern)
-                )
-            )
-        
-        # Apply filters
-        filters = filters or {}
-        if filters.get("status"):
-            query = query.filter(FraudAlert.alert_status == filters["status"])
-        if filters.get("severity"):
-            query = query.filter(FraudAlert.alert_severity == filters["severity"])
-        if filters.get("priority"):
-            query = query.filter(FraudAlert.alert_severity == filters["priority"])
-        if filters.get("min_risk_score") is not None:
-            query = query.filter(FraudAlert.risk_score >= filters["min_risk_score"])
-        if filters.get("max_risk_score") is not None:
-            query = query.filter(FraudAlert.risk_score <= filters["max_risk_score"])
-        
-        query = query.order_by(desc(FraudAlert.alert_created_at))
-        
-        total = query.count()
-        alerts = query.limit(limit).offset(offset).all()
-        
-        return (
-            [AlertService._format_alert_response(a) for a in alerts],
-            total
+    def search_alerts_paginated(session, query_text=None, filters=None, limit=50, offset=0):
+        return AlertService._list(
+            session, AlertService._search_query(query_text, filters), limit, offset
         )

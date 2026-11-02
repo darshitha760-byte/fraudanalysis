@@ -4,9 +4,9 @@ Tests cover risk scoring, alert creation, API endpoints, and database persistenc
 """
 
 import pytest
+import mongomock
 from datetime import datetime
 from unittest.mock import Mock, patch, MagicMock
-from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
 from app.services.risk_engine import RiskEngine
@@ -15,6 +15,48 @@ from app.models.fraud_alert import FraudAssessment, FraudAlert, TriggeredRule
 from app.models.transaction import Transaction
 from app.models.customer import Customer
 from app.models.fraud_rule import FraudRule
+from tests.conftest import insert_test_document
+
+
+@pytest.fixture
+def unit_transaction_adapter(monkeypatch, test_session):
+    """Run transaction callbacks in mongomock without claiming rollback semantics.
+
+    Mongomock explicitly does not implement client sessions. Replica-set
+    rollback behavior is verified in test_mongo_persistence against real mongod.
+    """
+    if not isinstance(test_session.client, mongomock.MongoClient):
+        return
+
+    class CallbackOnlySession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def with_transaction(self, callback):
+            return callback(self)
+
+    monkeypatch.setattr(
+        test_session.client, "start_session", lambda: CallbackOnlySession()
+    )
+
+    from mongomock.collection import Collection
+
+    for method_name in ("find_one", "find_one_and_update", "insert_one"):
+        original = getattr(Collection, method_name)
+
+        def without_unsupported_session(method, *args, **kwargs):
+            kwargs.pop("session", None)
+            return method(*args, **kwargs)
+
+        monkeypatch.setattr(
+            Collection,
+            method_name,
+            lambda instance, *args, _original=original, **kwargs:
+                without_unsupported_session(_original.__get__(instance, Collection), *args, **kwargs),
+        )
 
 
 # ============================================================================
@@ -35,9 +77,7 @@ def customer(test_session):
         risk_profile="low",
         is_active=True
     )
-    test_session.add(customer)
-    test_session.commit()
-    return customer
+    return insert_test_document(test_session, customer)
 
 
 @pytest.fixture
@@ -61,9 +101,7 @@ def transaction(test_session, customer):
         device_id="device_123",
         channel="online"
     )
-    test_session.add(transaction)
-    test_session.commit()
-    return transaction
+    return insert_test_document(test_session, transaction)
 
 
 @pytest.fixture
@@ -106,8 +144,7 @@ def fraud_rules(test_session):
     ]
     
     for rule in rules:
-        test_session.add(rule)
-    test_session.commit()
+        insert_test_document(test_session, rule)
     return rules
 
 
@@ -225,7 +262,7 @@ class TestRiskEngine:
     
     @patch('app.services.risk_engine.FraudEngine')
     @patch('app.services.risk_engine.MLService')
-    def test_assess_fraud_risk_creates_assessment(self, mock_ml, mock_fraud, test_session, transaction, fraud_rules):
+    def test_assess_fraud_risk_creates_assessment(self, mock_ml, mock_fraud, test_session, transaction, fraud_rules, unit_transaction_adapter):
         """Test assess_fraud_risk creates a FraudAssessment record."""
         # Mock fraud engine to return rule triggers
         mock_fraud_instance = Mock()
@@ -260,7 +297,7 @@ class TestRiskEngine:
     
     @patch('app.services.risk_engine.FraudEngine')
     @patch('app.services.risk_engine.MLService')
-    def test_assess_fraud_risk_calculation_correctness(self, mock_ml, mock_fraud, test_session, transaction):
+    def test_assess_fraud_risk_calculation_correctness(self, mock_ml, mock_fraud, test_session, transaction, unit_transaction_adapter):
         """Test assess_fraud_risk calculates correct combined score."""
         # Mock fraud engine
         mock_fraud_instance = Mock()
@@ -305,8 +342,7 @@ class TestAlertService:
             ml_score=0.85,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -333,8 +369,7 @@ class TestAlertService:
             rules_triggered_count=1,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -357,8 +392,7 @@ class TestAlertService:
             rules_triggered_count=0,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -392,11 +426,9 @@ class TestAlertService:
                 merchant_name="Test",
                 location_country="US"
             )
-            test_session.add(tx)
-            test_session.flush()
+            insert_test_document(test_session, tx)
             transactions.append(tx)
         
-        test_session.commit()
         
         # Create assessments and alerts for each transaction
         for i, tx in enumerate(transactions):
@@ -407,8 +439,7 @@ class TestAlertService:
                 rules_triggered_count=1,
                 engine_version="1.0"
             )
-            test_session.add(assessment)
-            test_session.commit()
+            insert_test_document(test_session, assessment)
             
             AlertService.create_fraud_alert(
                 session=test_session,
@@ -435,8 +466,7 @@ class TestAlertService:
             rules_triggered_count=2,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -462,8 +492,7 @@ class TestAlertService:
             rules_triggered_count=2,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -496,8 +525,7 @@ class TestAlertService:
             rules_triggered_count=1,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -529,8 +557,7 @@ class TestAlertService:
             rules_triggered_count=3,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         alert_data = AlertService.create_fraud_alert(
             session=test_session,
@@ -572,8 +599,7 @@ class TestAlertService:
             rules_triggered_count=2,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         AlertService.create_fraud_alert(
             session=test_session,
@@ -664,7 +690,7 @@ class TestPhase5Integration:
     
     @patch('app.services.risk_engine.FraudEngine')
     @patch('app.services.risk_engine.MLService')
-    def test_end_to_end_risk_assessment_and_alert(self, mock_ml, mock_fraud, test_session, transaction, customer):
+    def test_end_to_end_risk_assessment_and_alert(self, mock_ml, mock_fraud, test_session, transaction, customer, unit_transaction_adapter):
         """Test complete flow: transaction -> assessment -> alert."""
         # Mock services
         mock_fraud_instance = Mock()
@@ -717,8 +743,7 @@ class TestPhase5Integration:
             rules_triggered_count=0,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         engine = RiskEngine()
         risk_level = engine.calculate_risk_level(0.0)
@@ -736,8 +761,7 @@ class TestPhase5Integration:
             rules_triggered_count=10,
             engine_version="1.0"
         )
-        test_session.add(assessment)
-        test_session.commit()
+        insert_test_document(test_session, assessment)
         
         engine = RiskEngine()
         risk_level = engine.calculate_risk_level(100.0)

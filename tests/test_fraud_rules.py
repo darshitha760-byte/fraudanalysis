@@ -6,12 +6,11 @@ import pytest
 from decimal import Decimal
 from datetime import datetime, timedelta
 
-from sqlalchemy.orm import Session
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.db.database import get_db
-from app.db.base import Base
+from app.db.database import from_bson, get_db
+from conftest import insert_test_document
 from app.models.customer import Customer
 from app.models.transaction import Transaction
 from app.models.fraud_rule import FraudRule
@@ -20,7 +19,7 @@ from app.core.security import hash_password
 
 
 # Use conftest fixtures: test_session, test_client
-# They provide in-memory SQLite database for testing
+# They provide isolated Mongo-compatible databases for testing.
 
 @pytest.fixture
 def db(test_session):
@@ -50,10 +49,7 @@ def test_customer(db):
         is_active=True,
         created_at=datetime.utcnow() - timedelta(days=30)
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 @pytest.fixture
@@ -69,10 +65,7 @@ def test_new_customer(db):
         risk_profile="low",
         is_active=True
     )
-    db.add(customer)
-    db.commit()
-    db.refresh(customer)
-    return customer
+    return insert_test_document(db, customer)
 
 
 @pytest.fixture
@@ -104,10 +97,7 @@ def test_admin_user(db):
         role=UserRole.ADMIN,
         is_active=True
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    return insert_test_document(db, user)
 
 
 @pytest.fixture
@@ -126,9 +116,7 @@ def test_rules(db):
             risk_weight=Decimal(str(rule_data["risk_weight"])),
             is_enabled=True
         )
-        db.add(rule)
-    
-    db.commit()
+        insert_test_document(db, rule)
 
 
 @pytest.fixture
@@ -144,6 +132,7 @@ def auth_headers(client, test_admin_user):
 
 # Fraud Engine Rule Tests
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR01HighValueTransaction:
     """Test R01: High-value transaction (> $5000)."""
     
@@ -158,8 +147,7 @@ class TestR01HighValueTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -177,8 +165,7 @@ class TestR01HighValueTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -196,14 +183,14 @@ class TestR01HighValueTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
         assert any(r.rule_id == "R01" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR02RapidTransactions:
     """Test R02: Rapid transactions (>3 within 10 mins)."""
     
@@ -221,11 +208,11 @@ class TestR02RapidTransactions:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
         # Evaluate the latest transaction
-        latest = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
+        latest_doc = db["transactions"].find_one(sort=[("transaction_date", -1)])
+        latest = Transaction.model_validate(from_bson(latest_doc))
         result = FraudEngine.evaluate_transaction(db, latest)
         
         assert any(r.rule_id == "R02" for r in result[2])
@@ -244,10 +231,10 @@ class TestR02RapidTransactions:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
-        latest = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
+        latest_doc = db["transactions"].find_one(sort=[("transaction_date", -1)])
+        latest = Transaction.model_validate(from_bson(latest_doc))
         result = FraudEngine.evaluate_transaction(db, latest)
         
         assert not any(r.rule_id == "R02" for r in result[2])
@@ -267,23 +254,25 @@ class TestR02RapidTransactions:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
-        latest = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
+        latest_doc = db["transactions"].find_one(sort=[("transaction_date", -1)])
+        latest = Transaction.model_validate(from_bson(latest_doc))
         result = FraudEngine.evaluate_transaction(db, latest)
         
         assert not any(r.rule_id == "R02" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR03GeographicAnomaly:
     """Test R03: Geographic anomaly."""
     
     def test_new_country_triggers_rule(self, db, test_customer, test_merchant, test_rules):
         """Test that transaction from new country triggers R03."""
         # Customer's home country is US
-        test_customer.country = "US"
-        db.commit()
+        db["customers"].update_one(
+            {"id": test_customer.id}, {"$set": {"country": "US"}}
+        )
         
         # Transaction from different country (GB)
         txn = Transaction(
@@ -298,8 +287,7 @@ class TestR03GeographicAnomaly:
             location_country="GB",
             location_city="London"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -307,6 +295,7 @@ class TestR03GeographicAnomaly:
         assert any(r.rule_id == "R03" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR04DuplicateTransaction:
     """Test R04: Duplicate transaction."""
     
@@ -323,8 +312,7 @@ class TestR04DuplicateTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn1)
-        db.commit()
+        insert_test_document(db, txn1)
         
         # Create duplicate within 5 mins
         txn2 = Transaction(
@@ -336,8 +324,7 @@ class TestR04DuplicateTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn2)
-        db.commit()
+        insert_test_document(db, txn2)
         
         result = FraudEngine.evaluate_transaction(db, txn2)
         
@@ -356,8 +343,7 @@ class TestR04DuplicateTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn1)
-        db.commit()
+        insert_test_document(db, txn1)
         
         txn2 = Transaction(
             transaction_id="txn_11",
@@ -368,14 +354,14 @@ class TestR04DuplicateTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn2)
-        db.commit()
+        insert_test_document(db, txn2)
         
         result = FraudEngine.evaluate_transaction(db, txn2)
         
         assert not any(r.rule_id == "R04" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR05LateNightTransaction:
     """Test R05: Late-night transaction (2-5 AM)."""
     
@@ -392,8 +378,7 @@ class TestR05LateNightTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -412,8 +397,7 @@ class TestR05LateNightTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -432,8 +416,7 @@ class TestR05LateNightTransaction:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -441,6 +424,7 @@ class TestR05LateNightTransaction:
         assert any(r.rule_id == "R05" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR08AmountDeviation:
     """Test R08: Amount deviation from customer average (>3x)."""
     
@@ -457,8 +441,7 @@ class TestR08AmountDeviation:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
         # Create transaction 3x average
         high_txn = Transaction(
@@ -470,8 +453,7 @@ class TestR08AmountDeviation:
             currency="USD",
             status="completed"
         )
-        db.add(high_txn)
-        db.commit()
+        insert_test_document(db, high_txn)
         
         result = FraudEngine.evaluate_transaction(db, high_txn)
         
@@ -490,8 +472,7 @@ class TestR08AmountDeviation:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
         # Create transaction within 3x average
         normal_txn = Transaction(
@@ -503,14 +484,14 @@ class TestR08AmountDeviation:
             currency="USD",
             status="completed"
         )
-        db.add(normal_txn)
-        db.commit()
+        insert_test_document(db, normal_txn)
         
         result = FraudEngine.evaluate_transaction(db, normal_txn)
         
         assert not any(r.rule_id == "R08" for r in result[2])
 
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestR10NewCustomerHighValue:
     """Test R10: New customer high-value transaction."""
     
@@ -525,8 +506,7 @@ class TestR10NewCustomerHighValue:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -543,8 +523,7 @@ class TestR10NewCustomerHighValue:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -561,8 +540,7 @@ class TestR10NewCustomerHighValue:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -571,6 +549,7 @@ class TestR10NewCustomerHighValue:
 
 # Risk Score & Level Tests
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestRiskScoring:
     """Test risk score calculation and risk level determination."""
     
@@ -585,8 +564,7 @@ class TestRiskScoring:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -609,7 +587,7 @@ class TestRiskScoring:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
+            insert_test_document(db, txn)
         
         # High-value late-night transaction (triggers R01: 25, R05: 8, R02: 20 = 53 total)
         txn = Transaction(
@@ -621,8 +599,7 @@ class TestRiskScoring:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -644,10 +621,10 @@ class TestRiskScoring:
                 currency="USD",
                 status="completed"
             )
-            db.add(txn)
-        db.commit()
+            insert_test_document(db, txn)
         
-        latest = db.query(Transaction).order_by(Transaction.transaction_date.desc()).first()
+        latest_doc = db["transactions"].find_one(sort=[("transaction_date", -1)])
+        latest = Transaction.model_validate(from_bson(latest_doc))
         result = FraudEngine.evaluate_transaction(db, latest)
         
         assert result[0] <= 100
@@ -747,6 +724,7 @@ class TestFraudRulesAPI:
 
 # Edge Cases & Error Scenarios
 
+@pytest.mark.usefixtures("mongo_server_only")
 class TestFraudRuleEdgeCases:
     """Test edge cases in fraud rule evaluation."""
     
@@ -762,8 +740,7 @@ class TestFraudRuleEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         # Should not raise error, just skip applicable rules
         result = FraudEngine.evaluate_transaction(db, txn)
@@ -784,8 +761,7 @@ class TestFraudRuleEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         result = FraudEngine.evaluate_transaction(db, txn)
         
@@ -803,13 +779,10 @@ class TestFraudRuleEdgeCases:
             currency="USD",
             status="completed"
         )
-        db.add(txn)
-        db.commit()
+        insert_test_document(db, txn)
         
         # Should handle gracefully - minimal amount rules should not trigger
         result = FraudEngine.evaluate_transaction(db, txn)
         # R01 (high-value) should not trigger with minimal amount
         triggered_rule_ids = [r.rule_id for r in result[2]]
         assert "R01" not in triggered_rule_ids
-
-

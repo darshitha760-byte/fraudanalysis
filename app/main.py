@@ -6,9 +6,8 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import get_settings
-from app.db.database import get_engine
-from app.db.base import Base
-from app.api import auth, transactions, fraud_rules, fraud_assessment, alert_management, alert_dashboard, analytics, users, models, audit_logs
+from app.db.database import check_database, close_db, initialize_database
+from app.api import auth, transactions, fraud_rules, fraud_assessment, alert_management, alert_dashboard, analytics, users, models, audit_logs, health
 import logging
 
 # Configure logging
@@ -82,6 +81,7 @@ app.include_router(analytics.router)
 app.include_router(users.router)
 app.include_router(models.router)
 app.include_router(audit_logs.router)
+app.include_router(health.router)
 
 
 # Error handlers
@@ -113,13 +113,19 @@ async def general_exception_handler(request, exc):
 async def startup_event():
     """Initialize database tables and log startup."""
     logger.info(f"Starting application in {settings.environment} mode")
-    logger.info(f"Database: {settings.db_host}:{settings.db_port}/{settings.db_name}")
+    logger.info("Connecting to MongoDB database %s", settings.mongodb_database)
     
     try:
-        # Create tables (in production, use Alembic migrations)
-        engine = get_engine()
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables initialized")
+        if (
+            settings.model_storage_backend.lower() == "atlas"
+            and len(settings.model_artifact_signing_key.encode("utf-8")) < 32
+        ):
+            raise RuntimeError(
+                "MODEL_ARTIFACT_SIGNING_KEY must be configured with at least 32 bytes."
+            )
+        check_database()
+        initialize_database()
+        logger.info("MongoDB indexes initialized")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise
@@ -129,6 +135,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up on shutdown."""
     logger.info("Shutting down application")
+    close_db()
 
 
 if __name__ == "__main__":

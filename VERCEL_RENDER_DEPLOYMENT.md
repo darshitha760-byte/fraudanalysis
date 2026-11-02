@@ -1,5 +1,11 @@
 # Deployment Guide: Vercel & Render
 
+> **Legacy deployment guide — do not execute as written.** Its
+> PostgreSQL/MySQL, `DATABASE_URL`, and Alembic instructions are obsolete.
+> Active persistence requires an already provisioned MongoDB service configured
+> through `MONGODB_URI` and `MONGODB_DATABASE`. No cloud resources or deployment
+> were provisioned or verified.
+
 This guide covers deploying the Financial Risk Analysis & Hybrid Fraud Detection System to Vercel (frontend) and Render (backend).
 
 ---

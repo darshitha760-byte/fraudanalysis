@@ -6,19 +6,17 @@ Tests the complete fraud detection pipeline.
 
 import sys
 from pathlib import Path
+import mongomock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.config import get_settings
-from app.db.database import get_engine
 from app.core.security import hash_password, create_access_token, verify_password
 
-engine = get_engine()
 from app.models.user import User
 from app.models.customer import Customer
 from app.models.transaction import Transaction
 from app.models.fraud_rule import FraudRule
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
@@ -27,15 +25,15 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
 
 
-def test_database_connection():
-    """Test database connection."""
+def test_database_connection(test_session=None):
+    """Test that the isolated MongoDB-compatible test database is usable."""
     logger.info("\n[TEST 1] Database Connection")
     try:
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT 1"))
-            assert result.fetchone() is not None
-        logger.info("✓ Database connection successful")
+        if test_session is None:
+            test_session = mongomock.MongoClient()["financial_risk_test"]
+        test_session["test_probe"].insert_one({"ok": True})
+        assert test_session["test_probe"].find_one({"ok": True}) is not None
+        logger.info("✓ Isolated document database is usable")
         return True
     except Exception as e:
         logger.error(f"✗ Database connection failed: {e}")

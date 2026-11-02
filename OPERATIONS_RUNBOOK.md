@@ -1,4 +1,12 @@
-# Operations Runbook
+# Legacy Operations Runbook — SQL Procedures Retired
+
+> **Do not execute the historical SQL/PostgreSQL commands below.** The active
+> application uses MongoDB through PyMongo with `MONGODB_URI` and
+> `MONGODB_DATABASE`. Use the MongoDB provider's approved backup, restore,
+> monitoring, and access-control procedures for the target deployment. No
+> MongoDB maintenance, backup, restore, or data transfer was run in this task.
+> `python run_migrations.py initialize` only checks connectivity and ensures
+> indexes; it does not perform SQL schema migration or transfer records.
 
 Common operational procedures, troubleshooting steps, and maintenance tasks for the Fraud Detection Dashboard system.
 

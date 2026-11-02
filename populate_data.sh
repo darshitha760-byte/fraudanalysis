@@ -3,7 +3,6 @@
 # Populate database with sample data via API calls
 # This script adds customers, transactions, and rules to the system
 
-BASE_URL="http://fraud_detection_api:8000"
 API_URL="http://localhost:8001"  # For local testing
 
 echo "🌱 Starting to populate database with sample data..."
@@ -12,24 +11,23 @@ echo "=================================================="
 # First, register/login to get a token
 echo -e "\n1️⃣ Authenticating..."
 
-# Try to login with default credentials
+if [ -z "${ADMIN_EMAIL:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
+  echo "Set ADMIN_EMAIL and ADMIN_PASSWORD in the environment before running."
+  exit 1
+fi
+
 LOGIN_RESPONSE=$(curl -s -X POST "$API_URL/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@fraud-detection.local",
-    "password": "password"
-  }')
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
 
 TOKEN=$(echo $LOGIN_RESPONSE | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
 
 if [ -z "$TOKEN" ]; then
   echo "❌ Failed to get authentication token"
-  echo "Response: $LOGIN_RESPONSE"
   exit 1
 fi
 
 echo "✅ Authentication successful"
-echo "Token: ${TOKEN:0:20}..."
 
 # Function to make API calls with token
 call_api() {
@@ -37,7 +35,7 @@ call_api() {
   local endpoint=$2
   local data=$3
   
-  curl -s -X $method "$API_URL$endpoint" \
+  curl -s -X "$method" "$API_URL$endpoint" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
     -d "$data"
@@ -69,7 +67,7 @@ echo "📝 Attempting to add transactions..."
 
 # Test adding a transaction
 RESPONSE=$(call_api POST "/api/transactions" "$TRANSACTION_1")
-echo "Response: $RESPONSE"
+echo "Transaction request completed; inspect API status without sharing response data."
 
 # Add more sample data...
 echo -e "\n✅ Sample data population complete!"

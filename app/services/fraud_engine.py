@@ -7,12 +7,11 @@ import logging
 from decimal import Decimal
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from pymongo.database import Database
 
+from app.db.database import from_bson, to_bson
 from app.models.transaction import Transaction
 from app.models.fraud_rule import FraudRule
-from app.models.fraud_alert import TriggeredRule
 from app.models.customer import Customer
 
 logger = logging.getLogger(__name__)
@@ -138,7 +137,7 @@ class FraudEngine:
     
     @staticmethod
     def evaluate_transaction(
-        db: Session,
+        db: Database,
         transaction: Transaction
     ) -> Tuple[Decimal, str, List[RuleResult]]:
         """
@@ -155,9 +154,8 @@ class FraudEngine:
         total_risk_weight = Decimal("0")
         
         # Get all enabled rules
-        rules = db.query(FraudRule).filter(
-            FraudRule.is_enabled == True
-        ).all()
+        rules = [FraudRule.model_validate(from_bson(doc))
+                 for doc in db["fraud_rules"].find({"is_enabled": True})]
         
         # Create rule lookup for quick access
         rule_map = {rule.rule_id: rule for rule in rules}
@@ -197,7 +195,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r01(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -220,7 +218,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r02(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -235,14 +233,11 @@ class FraudEngine:
         
         cutoff_time = transaction.transaction_date - timedelta(minutes=time_window)
         
-        recent_count = db.query(func.count(Transaction.id)).filter(
-            and_(
-                Transaction.customer_id == transaction.customer_id,
-                Transaction.transaction_date >= cutoff_time,
-                Transaction.transaction_date <= transaction.transaction_date,
-                Transaction.status == "completed"
-            )
-        ).scalar() or 0
+        recent_count = db["transactions"].count_documents({
+            "customer_id": transaction.customer_id,
+            "transaction_date": {"$gte": cutoff_time, "$lte": transaction.transaction_date},
+            "status": "completed",
+        })
         
         triggered = recent_count > 3  # >3 means strictly greater than 3
         
@@ -258,13 +253,18 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r03(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
         """R03: Geographic anomaly."""
         # Check if transaction location differs from customer's usual location
-        if not transaction.location_country or not transaction.customer:
+        customer_doc = db["customers"].find_one({"id": transaction.customer_id})
+        customer = (
+            Customer.model_validate(from_bson(customer_doc))
+            if customer_doc else None
+        )
+        if not transaction.location_country or not customer:
             return RuleResult(
                 rule_id="R03",
                 rule_name="Geographic Anomaly",
@@ -274,7 +274,6 @@ class FraudEngine:
                 explanation="Missing location or customer data"
             )
         
-        customer = transaction.customer
         triggered = False
         explanation = ""
         
@@ -295,7 +294,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r04(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -306,16 +305,13 @@ class FraudEngine:
         
         cutoff_time = transaction.transaction_date - timedelta(minutes=time_window)
         
-        duplicate = db.query(Transaction).filter(
-            and_(
-                Transaction.customer_id == transaction.customer_id,
-                Transaction.amount == transaction.amount,
-                Transaction.merchant_id == transaction.merchant_id,
-                Transaction.transaction_date >= cutoff_time,
-                Transaction.transaction_date < transaction.transaction_date,
-                Transaction.status == "completed"
-            )
-        ).first()
+        duplicate = db["transactions"].find_one({
+            "customer_id": transaction.customer_id,
+            "amount": to_bson(transaction.amount),
+            "merchant_id": transaction.merchant_id,
+            "transaction_date": {"$gte": cutoff_time, "$lt": transaction.transaction_date},
+            "status": "completed",
+        })
         
         triggered = duplicate is not None
         
@@ -330,7 +326,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r05(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -349,12 +345,12 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r06(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
         """R06: Unusual merchant category for customer."""
-        if not transaction.merchant_category or not transaction.customer:
+        if not transaction.merchant_category or not db["customers"].find_one({"id": transaction.customer_id}):
             return RuleResult(
                 rule_id="R06",
                 rule_name="Unusual Merchant Category",
@@ -365,14 +361,12 @@ class FraudEngine:
             )
         
         # Check if this is a new merchant category for customer
-        prev_transaction = db.query(Transaction).filter(
-            and_(
-                Transaction.customer_id == transaction.customer_id,
-                Transaction.merchant_category == transaction.merchant_category,
-                Transaction.transaction_date < transaction.transaction_date,
-                Transaction.status == "completed"
-            )
-        ).first()
+        prev_transaction = db["transactions"].find_one({
+            "customer_id": transaction.customer_id,
+            "merchant_category": transaction.merchant_category,
+            "transaction_date": {"$lt": transaction.transaction_date},
+            "status": "completed",
+        })
         
         triggered = prev_transaction is None
         
@@ -388,7 +382,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r07(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -399,14 +393,11 @@ class FraudEngine:
         
         cutoff_time = transaction.transaction_date - timedelta(hours=24)
         
-        transaction_count = db.query(func.count(Transaction.id)).filter(
-            and_(
-                Transaction.customer_id == transaction.customer_id,
-                Transaction.transaction_date >= cutoff_time,
-                Transaction.transaction_date <= transaction.transaction_date,
-                Transaction.status == "completed"
-            )
-        ).scalar() or 0
+        transaction_count = db["transactions"].count_documents({
+            "customer_id": transaction.customer_id,
+            "transaction_date": {"$gte": cutoff_time, "$lte": transaction.transaction_date},
+            "status": "completed",
+        })
         
         triggered = transaction_count > count_threshold
         
@@ -422,7 +413,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r08(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -432,13 +423,14 @@ class FraudEngine:
             deviation_multiplier = rule.threshold_value
         
         # Calculate customer's average transaction amount (excluding this one)
-        avg_result = db.query(func.avg(Transaction.amount)).filter(
-            and_(
-                Transaction.customer_id == transaction.customer_id,
-                Transaction.status == "completed",
-                Transaction.id != transaction.id
-            )
-        ).scalar()
+        averages = list(db["transactions"].aggregate([
+            {"$match": {"customer_id": transaction.customer_id,
+                        "status": "completed", "id": {"$ne": transaction.id}}},
+            {"$group": {"_id": None, "average": {"$avg": "$amount"}}},
+        ]))
+        avg_result = averages[0]["average"] if averages else None
+        if hasattr(avg_result, "to_decimal"):
+            avg_result = avg_result.to_decimal()
         
         if not avg_result or avg_result == 0:
             return RuleResult(
@@ -465,7 +457,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r09(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -489,7 +481,7 @@ class FraudEngine:
     
     @staticmethod
     def _evaluate_r10(
-        db: Session,
+        db: Database,
         transaction: Transaction,
         rule: Optional[FraudRule]
     ) -> RuleResult:
@@ -503,7 +495,8 @@ class FraudEngine:
             if rule.threshold_config:
                 days_threshold = rule.threshold_config.get("days_threshold", 7)
         
-        if not transaction.customer:
+        customer_doc = db["customers"].find_one({"id": transaction.customer_id})
+        if not customer_doc:
             return RuleResult(
                 rule_id="R10",
                 rule_name="New Customer High-Value",
@@ -513,8 +506,8 @@ class FraudEngine:
                 explanation="Customer not found"
             )
         
-        customer = transaction.customer
-        customer_age = (datetime.utcnow() - customer.created_at).days
+        customer = Customer.model_validate(from_bson(customer_doc))
+        customer_age = (datetime.now(customer.created_at.tzinfo) - customer.created_at).days
         
         triggered = (
             customer_age < days_threshold and

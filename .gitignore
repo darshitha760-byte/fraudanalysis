@@ -2,6 +2,19 @@
 .env
 .env.local
 .env.*.local
+.env.production
+.env.*.production
+frontend/.env*
+!frontend/.env.example
+/RESUMES/
+/resumes/
+/data/
+/backup/
+/models/
+*.sql
+*.dump
+*.bson
+*.archive
 
 # Python
 __pycache__/

@@ -6,9 +6,7 @@ pydantic-settings>=2.10.0
 email-validator>=2.2.0
 
 # Database
-sqlalchemy>=2.1.5
-pymysql==1.1.0
-alembic>=1.20.0
+pymongo>=4.10,<5
 cryptography>=41.0.5
 
 # Authentication & Security
@@ -37,6 +35,7 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0
 httpx>=0.25.0
 pytest-cov>=4.1.0
+mongomock>=4.1.2,<5
 
 # Utilities
 python-dateutil>=2.8.2
