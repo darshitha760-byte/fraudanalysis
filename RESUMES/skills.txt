@@ -1,1 +1,0 @@
-Java, Hibernate, Microservices, PostgreSQL, MySQL, MongoDB, Gradle, Maven, Eclipse, NodeJS, ReactJS, AngularJS, JavaScript, HTML, CSS, Ethereum, Solidity, Geth, Adobe Photoshop 
