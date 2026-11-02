@@ -208,6 +208,7 @@ def save_model_artifacts(
                 logger.warning("Unable to clean an unpublished model artifact.")
         if isinstance(exc, DuplicateKeyError):
             raise ArtifactError("Model artifact identifier already exists.") from None
+        logger.exception("Model artifact publication failed for model %s", model_id)
         raise ArtifactError("Model artifact publication failed; no model was published.") from None
     return model_id
 

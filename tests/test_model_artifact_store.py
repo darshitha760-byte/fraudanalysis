@@ -163,7 +163,7 @@ def test_missing_or_weak_signing_key_blocks_publish_and_load(artifact_db):
     assert artifact_db[store.REGISTRY_NAME].count_documents({}) == 0
 
 
-def test_failed_registry_publication_removes_uploaded_blobs(monkeypatch):
+def test_failed_registry_publication_removes_uploaded_blobs(monkeypatch, caplog):
     model, scaler, metadata, _ = _trained_objects()
 
     class _Cursor:
@@ -197,6 +197,7 @@ def test_failed_registry_publication_removes_uploaded_blobs(monkeypatch):
             _Database(), model, metadata, "random_forest",
             "random_forest_v1.0.0_20261102_001122_123456", SIGNING_KEY, scaler,
         )
+    assert "simulated publication failure" in caplog.text
     assert _MemoryBucket.files == {}
 
 
